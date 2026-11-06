@@ -1,0 +1,8 @@
+.DS_Store
+.mediamind/
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+dist/
+target/

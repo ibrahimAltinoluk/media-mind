@@ -1,0 +1,80 @@
+"""Sıfır-atış içerik etiketleri: etiket → (tür, istemler). İstemler Türkçe ve İngilizce karışıktır; ortalaması alınır."""
+
+VOCAB: dict[str, tuple[str, list[str]]] = {
+    # sahneler
+    "deniz": ("scene", ["a photo of the sea", "deniz manzarası"]),
+    "plaj": ("scene", ["a photo of a sandy beach", "kumsal ve plaj"]),
+    "göl": ("scene", ["a photo of a lake", "göl manzarası"]),
+    "dağ": ("scene", ["a photo of mountains", "dağ manzarası"]),
+    "orman": ("scene", ["a photo of a forest", "ormanda ağaçlar"]),
+    "kar": ("scene", ["a snowy landscape", "karlı bir manzara"]),
+    "çöl": ("scene", ["a photo of a desert", "çöl"]),
+    "şehir": ("scene", ["a city street with buildings", "şehir manzarası"]),
+    "gece": ("scene", ["a photo taken at night", "gece çekilmiş fotoğraf"]),
+    "gün batımı": ("scene", ["a sunset over the horizon", "gün batımı"]),
+    "gökyüzü": ("scene", ["the sky with clouds", "bulutlu gökyüzü"]),
+    "bahçe": ("scene", ["a garden with flowers and grass", "bahçe"]),
+    "park": ("scene", ["people in a public park", "parkta"]),
+    "iç mekân": ("scene", ["an indoor room", "ev içi, oda"]),
+    "mutfak": ("scene", ["a kitchen", "mutfak"]),
+    "restoran": ("scene", ["a restaurant or cafe interior", "restoran, kafe"]),
+    "havuz": ("scene", ["a swimming pool", "yüzme havuzu"]),
+    "tekne": ("object", ["a boat on the water", "tekne"]),
+    "cami": ("scene", ["a mosque", "cami"]),
+    "kilise": ("scene", ["a church", "kilise"]),
+    "tarihi yapı": ("scene", ["historic ruins or an old monument", "tarihi kalıntılar, antik yapı"]),
+    "müze": ("scene", ["a museum exhibition", "müze"]),
+    "konser": ("scene", ["a concert with a stage and lights", "konser"]),
+    "stadyum": ("scene", ["a sports stadium", "stadyum"]),
+    "havalimanı": ("scene", ["an airport or airplane", "havalimanı, uçak"]),
+    "yol": ("scene", ["a road trip, a road through landscape", "yol, araba yolculuğu"]),
+    "şelale": ("scene", ["a waterfall", "şelale"]),
+    "köprü": ("object", ["a bridge", "köprü"]),
+    # etkinlikler
+    "doğum günü": ("event", ["a birthday party with cake and candles", "doğum günü pastası"]),
+    "düğün": ("event", ["a wedding ceremony with bride and groom", "düğün, gelin ve damat"]),
+    "mezuniyet": ("event", ["a graduation ceremony with caps and gowns", "mezuniyet töreni"]),
+    "piknik": ("event", ["a picnic outdoors", "piknik"]),
+    "yüzme": ("event", ["people swimming in water", "yüzen insanlar"]),
+    "kayak": ("event", ["skiing on snow", "kayak yapan biri"]),
+    "spor": ("event", ["people playing sports", "spor yapan insanlar"]),
+    "yemek": ("object", ["a plate of food", "yemek tabağı"]),
+    "kahvaltı": ("object", ["a breakfast table", "kahvaltı sofrası"]),
+    "tatlı": ("object", ["dessert, cake or ice cream", "tatlı, pasta"]),
+    "içecek": ("object", ["a drink, coffee or tea", "çay, kahve, içecek"]),
+    # insanlar
+    "insan": ("people", ["a photo of a person", "bir insanın fotoğrafı"]),
+    "grup fotoğrafı": ("people", ["a group photo of many people", "kalabalık grup fotoğrafı"]),
+    "özçekim": ("people", ["a selfie", "selfie, özçekim"]),
+    "bebek": ("people", ["a baby", "bebek"]),
+    "çocuk": ("people", ["a young child playing", "küçük çocuk"]),
+    "portre": ("people", ["a close-up portrait of a face", "yakın plan portre"]),
+    # hayvanlar
+    "kedi": ("animal", ["a photo of a cat", "kedi"]),
+    "köpek": ("animal", ["a photo of a dog", "köpek"]),
+    "kuş": ("animal", ["a photo of a bird", "kuş"]),
+    "at": ("animal", ["a photo of a horse", "at"]),
+    "balık": ("animal", ["fish underwater", "balık"]),
+    "inek": ("animal", ["a cow or farm animals", "inek, çiftlik hayvanı"]),
+    # nesneler
+    "araba": ("object", ["a car", "araba"]),
+    "bisiklet": ("object", ["a bicycle", "bisiklet"]),
+    "çiçek": ("object", ["flowers", "çiçekler"]),
+    "ağaç": ("object", ["a tree", "ağaç"]),
+    "kitap": ("object", ["books", "kitap"]),
+    "bilgisayar": ("object", ["a laptop or computer screen", "bilgisayar"]),
+    "oyuncak": ("object", ["toys", "oyuncak"]),
+    "noel ağacı": ("object", ["a christmas tree with decorations", "yılbaşı ağacı"]),
+    # belge türleri (temizlik için faydalı)
+    "ekran görüntüsü": ("document", ["a screenshot of a phone or computer screen", "telefon ekran görüntüsü"]),
+    "belge": ("document", ["a photo of a paper document with text", "kâğıt belge, yazılı sayfa"]),
+    "fiş": ("document", ["a receipt", "alışveriş fişi"]),
+    "kimlik/kart": ("document", ["an id card or credit card", "kimlik kartı"]),
+    "harita": ("document", ["a map", "harita"]),
+    "meme/grafik": ("document", ["a meme or graphic with text overlay", "yazılı görsel, meme"]),
+}
+
+# Bir etiketin atanması için: benzerlik ≥ ortalama + Z_MIN × std ve ≥ ABS_MIN; en çok MAX_TAGS etiket
+Z_MIN = 2.6
+ABS_MIN = 0.065
+MAX_TAGS = 6
