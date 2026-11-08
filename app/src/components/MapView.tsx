@@ -26,7 +26,7 @@ export function MapView({ repoId, points, onSelect, pick, onPick, height = "100%
   repoId: string;
   points: MapPoint[];
   onSelect?: (pts: MapPoint[]) => void;
-  pick?: { lat: number; lon: number } | null;
+  pick?: { lat: number; lon: number; fly?: boolean } | null;
   onPick?: (lat: number, lon: number) => void;
   height?: number | string;
 }) {
@@ -97,6 +97,8 @@ export function MapView({ repoId, points, onSelect, pick, onPick, height = "100%
     pickMarker.current = null;
     if (pick) {
       pickMarker.current = L.circleMarker([pick.lat, pick.lon], { radius: 9, color: "#fff", weight: 3, fillColor: "#007aff", fillOpacity: 1 }).addTo(m);
+      // Aramadan seçilen yere git (haritaya tıklayınca görünüm oynamasın)
+      if (pick.fly) m.setView([pick.lat, pick.lon], Math.max(m.getZoom(), 15));
     }
   }, [pick]);
 

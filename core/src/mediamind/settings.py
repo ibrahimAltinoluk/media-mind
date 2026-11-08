@@ -56,6 +56,10 @@ DEFAULTS: dict[str, Any] = {
     "models": {
         "speech": "standard",
     },
+    # Özgün dosyalar: uygulamada eklenen/düzeltilen konum dosyanın kendisine de yazılsın mı
+    "files": {
+        "write_location": True,
+    },
     "agents": {
         "read": True,
         "tag": True,
@@ -109,6 +113,8 @@ def update(patch: dict[str, Any]) -> dict[str, Any]:
                     raise ValueError(f"Geçersiz düşünme düzeyi: {v}")
                 if k in ("openrouter_model", "gemini_model"):
                     v = str(v).strip()[:200]
+            if section == "files":
+                v = bool(v)
             if section == "models" and v not in ("standard", "high"):
                 raise ValueError(f"Geçersiz model kalitesi: {v}")
             cur[section][k] = v

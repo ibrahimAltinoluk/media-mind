@@ -96,7 +96,7 @@ function FaceOverlay({ faces }: { faces: { id: number; x1: number; y1: number; x
     return () => { ro.disconnect(); img.removeEventListener("load", update); };
   }, [faces]);
   return (
-    <div ref={ref} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+    <div ref={ref} style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, pointerEvents: "none" }}>
       {box && faces.map((f) => (
         <div key={f.id} style={{ position: "absolute", left: box.x + f.x1 * box.width, top: box.y + f.y1 * box.height, width: (f.x2 - f.x1) * box.width, height: (f.y2 - f.y1) * box.height,
           border: `2px solid ${f.name ? "#f0b443" : "#7fb0ff"}`, borderRadius: 6 }}>
@@ -159,7 +159,7 @@ function TagLayer({ repoId, onPick, onCancel }: { repoId: string; onPick: (box: 
   ];
   return (
     <div ref={ref} onMouseDown={down} onMouseMove={move} onMouseUp={up}
-      style={{ position: "absolute", inset: 0, zIndex: 3, cursor: done ? "default" : "crosshair" }}>
+      style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 3, cursor: done ? "default" : "crosshair" }}>
       <div style={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", background: "rgba(20,22,25,.85)", color: "#eceef1", padding: "6px 12px", borderRadius: 8, fontSize: 13, pointerEvents: "none" }}>
         {done ? "Bu kim?" : "Kişinin üzerine bir kutu çiz"} · Esc ile çık
       </div>

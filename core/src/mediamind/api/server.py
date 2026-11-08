@@ -713,6 +713,7 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
 
     # ------------------------------------------------------------------ medya dosyaları
     def _asset_source(repo: Repo, blake: str):
+        blake = library.resolve_blake(repo, blake)
         row = repo.db.execute(
             "SELECT a.id, a.kind, a.duration_ms, f.fs_path FROM assets a JOIN files f ON f.asset_id=a.id "
             "WHERE a.blake3=? AND f.state IN ('present','trashed') "
@@ -728,6 +729,9 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
             raise HTTPException(400, "Geçersiz boyut")
         repo = pool.get(repo_id)
         target = repo.thumb_path(blake, size)
+        if not target.exists():
+            blake = library.resolve_blake(repo, blake)  # dosyaya konum yazıldıysa eski adres
+            target = repo.thumb_path(blake, size)
         if not target.exists():
             with thumb_mx:
                 lk = thumb_locks.setdefault(blake, threading.Lock())
@@ -813,16 +817,29 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
         except ValueError as e:
             raise _bad(e)
 
+    def write_location_job(repo: Repo, ids: list[int]) -> dict | None:
+        """Ayar açıksa konumu özgün dosyalara yazan arka plan işi (dosya başına kısa kilit)."""
+        if not ids or not settings_mod.load()["files"].get("write_location", True):
+            return None
+        title = "Konum dosyaya yazılıyor" if len(ids) == 1 else f"Konum {len(ids)} dosyaya yazılıyor"
+        return submit(repo, "write_meta", title, lambda pr: library.write_location_to_files(repo, ids, pr), lane="media")
+
     @app.post("/repos/{repo_id}/edits/location")
     def edit_location(repo_id: str, asset_ids: list[int] = Body(...), lat: float = Body(...), lon: float = Body(...)):
+        repo = pool.get(repo_id)
         try:
-            return library.set_location(pool.get(repo_id), asset_ids, lat, lon)
+            r = library.set_location(repo, asset_ids, lat, lon)
         except ValueError as e:
             raise _bad(e)
+        r["job"] = write_location_job(repo, asset_ids)
+        return r
 
     @app.post("/repos/{repo_id}/edits/revert")
     def edit_revert(repo_id: str, asset_ids: list[int] = Body(..., embed=True)):
-        return {"reverted": library.revert_edits(pool.get(repo_id), asset_ids)}
+        repo = pool.get(repo_id)
+        loc = library.location_edit_ids(repo, asset_ids)
+        n = library.revert_edits(repo, asset_ids)
+        return {"reverted": n, "job": write_location_job(repo, loc)}
 
     @app.post("/repos/{repo_id}/export")
     def export_start(repo_id: str, file_ids: list[int] = Body(...), dest: str = Body(...), size: str = Body("original"),
@@ -864,6 +881,17 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
         return submit(repo, "compress", f"{len(file_ids)} video küçültülüyor",
                       lambda pr: library.compress_videos(repo, file_ids, pr, after_replace=lambda: resume_analysis(repo)),
                       lane="media")
+
+    @app.get("/geo/search")
+    def geo_search(q: str, online: bool = False, lat: float | None = None, lon: float | None = None):
+        """Konum atarken yer/adres arama: çevrimdışı şehir listesi ya da (online=1) OpenStreetMap adres araması."""
+        from ..media import geo as geo_mod
+
+        q = q.strip()[:200]
+        if len(q) < 2:
+            return {"results": []}
+        near = (lat, lon) if lat is not None and lon is not None else None
+        return {"results": geo_mod.search_online(q, near=near) if online else geo_mod.search(q)}
 
     @app.get("/repos/{repo_id}/map")
     def map_list(repo_id: str):

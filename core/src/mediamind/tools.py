@@ -615,9 +615,17 @@ def t_set_location(ctx: ToolContext, a: dict) -> dict:
     if lat is None or lon is None:
         raise ToolError("place ya da lat/lon gerekli")
     try:
-        return library.set_location(repo, assets, float(lat), float(lon))
+        r = library.set_location(repo, assets, float(lat), float(lon))
     except ValueError as e:
         raise ToolError(str(e))
+    from . import settings as settings_mod
+
+    if settings_mod.load()["files"].get("write_location", True):
+        w = library.write_location_to_files(repo, assets)
+        r["files_written"] = w["written"]
+        if w["failed"]:
+            r["file_errors"] = w["errors"][:5]
+    return r
 
 
 FILE_IDS = {"type": "array", "items": {"type": "integer"}, "description": "search_media'dan dönen file_id değerleri"}

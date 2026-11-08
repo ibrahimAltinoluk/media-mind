@@ -297,6 +297,105 @@ def set_location(repo: Repo, asset_ids: list[int], lat: float, lon: float) -> di
     return {"updated": len(asset_ids), "place": g["name"], "region": g["admin1"]}
 
 
+def write_location_to_files(repo: Repo, asset_ids: list[int], progress: Callable[[str, int, int], None] | None = None) -> dict:
+    """Öğelerin MediaMind'daki konumunu özgün dosyalara yazar (exiftool, yerinde; tarihler ve diğer meta korunur).
+
+    Dosya içeriği değiştiği için içerik özeti (blake3) yenilenir: öğe kimliği, yüzler, etiketler, albümler aynı kalır;
+    önizlemeler yeni özetin adına taşınır, eski özet takma ad olarak saklanır."""
+    from . import scan as scan_mod
+    from .media import writemeta
+
+    out = {"written": 0, "skipped": 0, "failed": 0, "errors": []}
+    if not writemeta.available():
+        out["errors"].append("exiftool bulunamadı")
+        out["failed"] = len(asset_ids)
+        return out
+    for i, aid in enumerate(asset_ids):
+        if progress:
+            progress("write", i, len(asset_ids))
+        a = repo.db.execute("SELECT id, blake3, lat, lon FROM assets WHERE id=?", (aid,)).fetchone()
+        if a is None:
+            continue
+        files = repo.db.execute("SELECT id, rel_path, fs_path FROM files WHERE asset_id=? AND state='present'", (aid,)).fetchall()
+        targets = [f for f in files if writemeta.writable(Path(f["fs_path"]))]
+        if not targets:
+            out["skipped"] += 1
+            continue
+        with repo.lock():
+            done: list[tuple[int, str, int, int]] = []  # (dosya no, yeni özet, boyut, mtime_ns)
+            for f in targets:
+                path = repo.root / f["fs_path"]
+                try:
+                    cur = writemeta.read_gps(path)
+                    if a["lat"] is not None and cur[0] is not None and abs(cur[0] - a["lat"]) < 1e-6 and abs(cur[1] - a["lon"]) < 1e-6:
+                        continue  # dosyada zaten bu konum var
+                    if a["lat"] is None and cur[0] is None:
+                        continue
+                    writemeta.write_gps(path, a["lat"], a["lon"])
+                except (writemeta.WriteError, OSError, subprocess.SubprocessError) as e:
+                    out["failed"] += 1
+                    out["errors"].append(f"{f['rel_path']}: {e}")
+                    continue
+                st = path.stat()
+                done.append((f["id"], scan_mod.hash_file(path), st.st_size, st.st_mtime_ns))
+            if not done:
+                continue
+            _rehash_asset(repo, a["id"], a["blake3"], done)
+            out["written"] += 1
+    if progress:
+        progress("write", len(asset_ids), len(asset_ids))
+    return out
+
+
+def _rehash_asset(repo: Repo, asset_id: int, old: str, done: list[tuple[int, str, int, int]]) -> None:
+    """Yazılan dosyaların yeni özetini kaydeder; önizlemeleri yeni ada taşır. (Kilit çağıran tarafta.)"""
+    new = done[0][1]
+    clash = repo.db.execute("SELECT id FROM assets WHERE blake3=? AND id<>?", (new, asset_id)).fetchone()
+    with repo.db as conn:
+        for fid, h, size, mtime in done:
+            if h == new and clash is None:
+                conn.execute("UPDATE files SET size=?, mtime_ns=? WHERE id=?", (size, mtime, fid))
+            # Farklı çıkan kopya (beklenmez) ya da çakışma: kayıt eski kalır, sonraki tarama doğru öğeye bağlar
+        if clash is not None or new == old:
+            return
+        conn.execute("UPDATE assets SET blake3=?, size=? WHERE id=?", (new, done[0][2], asset_id))
+        conn.execute("INSERT OR REPLACE INTO asset_aliases(blake3, asset_id) VALUES (?,?)", (old, asset_id))
+        conn.execute("DELETE FROM asset_aliases WHERE blake3=?", (new,))
+    _move_derived(repo, old, new)
+
+
+def _move_derived(repo: Repo, old: str, new: str) -> None:
+    def mv(src: Path, dst: Path) -> None:
+        if src.exists() and not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            src.replace(dst)
+
+    for size in ("s", "m", "l"):
+        mv(repo.thumb_path(old, size), repo.thumb_path(new, size))
+    mv(repo.mm / "frames" / old[:2] / old, repo.mm / "frames" / new[:2] / new)
+    mv(repo.mm / "proxies" / old[:2] / f"{old}.mp4", repo.mm / "proxies" / new[:2] / f"{new}.mp4")
+    mv(repo.mm / "cache" / "full" / f"{old}.jpg", repo.mm / "cache" / "full" / f"{new}.jpg")
+    faces = repo.mm / "faces"
+    if faces.is_dir():  # yüz kırpıntıları istendiğinde yeniden üretilir
+        for p in faces.glob(f"*_{old[:10]}_*.webp"):
+            p.unlink(missing_ok=True)
+
+
+def resolve_blake(repo: Repo, blake: str) -> str:
+    """Eski (dosyaya konum yazılmadan önceki) özet verilirse öğenin güncel özetini döndürür."""
+    r = repo.db.execute("SELECT a.blake3 FROM asset_aliases x JOIN assets a ON a.id=x.asset_id WHERE x.blake3=?", (blake,)).fetchone()
+    return r["blake3"] if r else blake
+
+
+def location_edit_ids(repo: Repo, asset_ids: list[int]) -> list[int]:
+    """Konumu düzeltilmiş olanlar (geri almada dosyaya da yazılacaklar)."""
+    if not asset_ids:
+        return []
+    q = ",".join("?" * len(asset_ids))
+    return [r[0] for r in repo.db.execute(
+        f"SELECT asset_id FROM asset_edits WHERE asset_id IN ({q}) AND lat IS NOT NULL", asset_ids)]
+
+
 def revert_edits(repo: Repo, asset_ids: list[int]) -> int:
     n = 0
     with repo.lock(), repo.db as conn:

@@ -112,6 +112,9 @@ def import_items(repo: Repo, source: dict, keys: list[str], template: str = DEFA
                     got[k] = [main, *side]
         # 2) Kütüphaneye yerleştir (aynı içerik zaten varsa atla)
         known = {r[0] for r in repo.db.execute("SELECT a.blake3 FROM assets a JOIN files f ON f.asset_id=a.id WHERE f.state='present'")}
+        # Konumu dosyaya yazılmış öğelerin özgün (telefondaki) hali de "zaten var" sayılır
+        known |= {r[0] for r in repo.db.execute(
+            "SELECT x.blake3 FROM asset_aliases x JOIN files f ON f.asset_id=x.asset_id WHERE f.state='present'")}
         # Klasör için tarih: indirilen dosyanın kendi EXIF/video bilgisi (aygıtın bildirdiği tarihten daha güvenilir)
         from .media import dates, exif
 

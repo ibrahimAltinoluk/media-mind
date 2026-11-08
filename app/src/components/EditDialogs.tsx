@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, isTauri, waitJob } from "../api";
 import { useApp } from "../state";
 import { cls, fmtBytes, fmtInt } from "../util";
+import { Photos, Pin } from "./Icons";
 import { MapView } from "./MapView";
 import { revealInFinder } from "./Sidebar";
 
@@ -28,7 +29,7 @@ const toLocalInput = (iso: string | null | undefined) => (iso ? iso.slice(0, 16)
 
 /** Tarihi düzelt: hepsini kaydır (ör. fotoğraf makinesinin saati yanlıştı) ya da hepsine aynı tarihi ver. */
 export function DateDialog({ repoId, assetIds, sample, onClose }: { repoId: string; assetIds: number[]; sample: string | null; onClose: () => void }) {
-  const { toast } = useApp();
+  const { toast, trackJob } = useApp();
   const qc = useQueryClient();
   const [mode, setMode] = useState<"shift" | "set">(sample ? "shift" : "set");
   const [dir, setDir] = useState<1 | -1>(1);
@@ -61,6 +62,7 @@ export function DateDialog({ repoId, assetIds, sample, onClose }: { repoId: stri
   };
   const revert = async () => {
     const r = await api.revertEdits(repoId, assetIds);
+    if (r.job) trackJob(r.job);
     done(r.reverted ? `${fmtInt(r.reverted)} öğe asıl bilgisine döndü` : "Geri alınacak düzeltme yok");
   };
   const num = (v: number, set: (n: number) => void, label: string) => (
@@ -100,13 +102,46 @@ export function DateDialog({ repoId, assetIds, sample, onClose }: { repoId: stri
   );
 }
 
-/** Konum ata: bilinen bir yeri seç ya da haritada bir noktaya tıkla. */
+type Spot = { lat: number; lon: number; label?: string; sub?: string; fly?: boolean };
+type GeoHit = { label: string; sub: string; lat: number; lon: number; source: "library" | "offline" | "online"; n?: number };
+
+/** Yazdıkça önerilen yerler: kütüphanedeki yerler + şehir/ilçe listesi (çevrimdışı) + adres araması (OpenStreetMap). */
+function useGeoSuggest(text: string, places: { name: string; lat: number; lon: number; n: number }[]) {
+  // Adres sonuçlarında kütüphanedeki fotoğrafların çoğunun çekildiği yere yakın olanlar öne çıkar
+  const near = places.length ? { lat: places[0].lat, lon: places[0].lon } : null;
+  const [deb, setDeb] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDeb(text.trim()), 300);
+    return () => clearTimeout(t);
+  }, [text]);
+  const on = deb.length >= 2;
+  const off = useQuery({ queryKey: ["geo", "off", deb], queryFn: () => api.geoSearch(deb, false), enabled: on, staleTime: Infinity });
+  const onl = useQuery({ queryKey: ["geo", "on", deb, near?.lat], queryFn: () => api.geoSearch(deb, true, near), enabled: deb.length >= 3, staleTime: Infinity, retry: false });
+  const f = text.trim().toLocaleLowerCase("tr");
+  const lib: GeoHit[] = f ? places.filter((p) => p.name.toLocaleLowerCase("tr").includes(f)).slice(0, 4)
+    .map((p) => ({ label: p.name, sub: `Kütüphanede · ${fmtInt(p.n)} öğe`, lat: p.lat, lon: p.lon, source: "library" as const, n: p.n })) : [];
+  const seen = new Set(lib.map((h) => h.label.toLocaleLowerCase("tr")));
+  const uniq = (hs: GeoHit[]) => hs.filter((h) => {
+    const k = `${h.label}|${h.sub}`.toLocaleLowerCase("tr");
+    if (seen.has(k) || seen.has(h.label.toLocaleLowerCase("tr"))) return false;
+    seen.add(k);
+    return true;
+  });
+  const hits = [...lib, ...uniq(off.data?.results ?? []).slice(0, 4), ...uniq(onl.data?.results ?? []).slice(0, 6)];
+  return { hits, loading: on && (off.isFetching || onl.isFetching), offline: onl.isFetched && !onl.data?.results.length && deb.length >= 3 };
+}
+
+/** Konum ata: yer ya da adres yaz (öneriler), bilinen bir yeri seç ya da haritada bir noktaya tıkla. */
 export function LocationDialog({ repoId, assetIds, onClose }: { repoId: string; assetIds: number[]; onClose: () => void }) {
-  const { toast } = useApp();
+  const { toast, trackJob } = useApp();
   const qc = useQueryClient();
   const pts = useQuery({ queryKey: ["map", repoId], queryFn: () => api.mapPoints(repoId) });
+  const st = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+  const writes = st.data?.settings.files?.write_location ?? true;
   const [q, setQ] = useState("");
-  const [pick, setPick] = useState<{ lat: number; lon: number; label?: string } | null>(null);
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const [pick, setPick] = useState<Spot | null>(null);
   const [busy, setBusy] = useState(false);
   // Bilinen yerler: kütüphanedeki konumlu fotoğraflardan (yer başına orta nokta)
   const places = useMemo(() => {
@@ -118,15 +153,28 @@ export function LocationDialog({ repoId, assetIds, onClose }: { repoId: string; 
       return { name, lat, lon, n: cs.length };
     }).sort((a, b) => b.n - a.n);
   }, [pts.data]);
-  const f = q.trim().toLocaleLowerCase("tr");
-  const shown = places.filter((p) => !f || p.name.toLocaleLowerCase("tr").includes(f)).slice(0, 8);
+  const sug = useGeoSuggest(q, places);
+  const showList = open && q.trim().length >= 2 && (sug.hits.length > 0 || sug.loading);
+  const choose = (h: GeoHit) => {
+    setPick({ lat: h.lat, lon: h.lon, label: h.label, sub: h.sub, fly: true });
+    setQ(h.label);
+    setOpen(false);
+  };
+  const onKey = (e: React.KeyboardEvent) => {
+    if (!showList) return;
+    if (e.key === "ArrowDown") { setHi((x) => Math.min(sug.hits.length - 1, x + 1)); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { setHi((x) => Math.max(0, x - 1)); e.preventDefault(); }
+    else if (e.key === "Enter" && sug.hits[hi]) { choose(sug.hits[hi]); e.preventDefault(); }
+    else if (e.key === "Escape") { setOpen(false); e.stopPropagation(); }
+  };
   const apply = async () => {
     if (!pick) return;
     setBusy(true);
     try {
       const r = await api.editLocation(repoId, assetIds, pick.lat, pick.lon);
+      if (r.job) trackJob(r.job);
       qc.invalidateQueries();
-      toast(`${fmtInt(r.updated)} öğeye konum verildi: ${[r.place, r.region].filter(Boolean).join(", ")}`);
+      toast(`${fmtInt(r.updated)} öğeye konum verildi: ${[r.place, r.region].filter(Boolean).join(", ")}${r.job ? ". Dosyalara da yazılıyor." : ""}`);
       onClose();
     } catch (e) {
       toast(String((e as Error).message), { error: true });
@@ -136,22 +184,49 @@ export function LocationDialog({ repoId, assetIds, onClose }: { repoId: string; 
   return (
     <Sheet title={assetIds.length > 1 ? `${fmtInt(assetIds.length)} öğeye konum ata` : "Konum ata"} onClose={onClose} width={620}
       footer={<>
-        <span className="muted" style={{ marginRight: "auto", fontSize: 12 }}>{pick ? (pick.label ?? `${pick.lat.toFixed(4)}, ${pick.lon.toFixed(4)}`) : "Bir yer seç ya da haritaya tıkla"}</span>
+        <span className="muted ellipsis" style={{ marginRight: "auto", fontSize: 12, maxWidth: 360 }}>
+          {pick ? (pick.label ? [pick.label, pick.sub].filter(Boolean).join(" · ") : `${pick.lat.toFixed(5)}, ${pick.lon.toFixed(5)}`) : "Bir yer ya da adres yaz veya haritaya tıkla"}
+        </span>
         <button className="btn" onClick={onClose}>Vazgeç</button>
         <button className="btn pri" disabled={!pick || busy} onClick={apply}>Uygula</button>
       </>}>
-      <label className="field"><span className="sr">Yer ara</span><input autoFocus placeholder="Bilinen yerlerde ara" value={q} onChange={(e) => setQ(e.target.value)} /></label>
-      {shown.length > 0 && (
+      <div style={{ position: "relative" }}>
+        <label className="field">
+          <span className="sr">Yer ya da adres ara</span>
+          <input autoFocus placeholder="Yer ya da adres yaz (ör. Kadıköy, Bağdat Caddesi 300)" value={q} role="combobox" aria-expanded={showList} aria-autocomplete="list"
+            onChange={(e) => { setQ(e.target.value); setOpen(true); setHi(0); }} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 120)} onKeyDown={onKey} />
+          {open && sug.loading && <span className="spin" style={{ flex: "none" }} />}
+        </label>
+        {showList && (
+          <div className="geo-sugg" role="listbox" onMouseDown={(e) => e.preventDefault()}>
+            {sug.hits.map((h, i) => (
+              <button key={`${h.source}-${h.label}-${h.sub}-${i}`} role="option" aria-selected={i === hi} className={cls("srow", i === hi && "hi")}
+                onMouseEnter={() => setHi(i)} onClick={() => choose(h)}>
+                <span className="geo-ic" aria-hidden>{h.source === "library" ? <Photos size={14} /> : <Pin size={14} />}</span>
+                <span className="grow col" style={{ minWidth: 0, gap: 0 }}>
+                  <span className="ellipsis">{h.label}</span>
+                  {h.sub && <span className="muted ellipsis" style={{ fontSize: 11.5 }}>{h.sub}</span>}
+                </span>
+              </button>
+            ))}
+            {!sug.hits.length && <div className="shint" style={{ borderTop: 0, marginTop: 0 }}>Aranıyor…</div>}
+          </div>
+        )}
+      </div>
+      {!q && places.length > 0 && (
         <div className="row wrap" style={{ gap: 6 }}>
-          {shown.map((p) => (
-            <button key={p.name} className={cls("chip", pick?.label === p.name && "on")} onClick={() => setPick({ lat: p.lat, lon: p.lon, label: p.name })}>{p.name}</button>
+          {places.slice(0, 8).map((p) => (
+            <button key={p.name} className={cls("chip", pick?.label === p.name && "on")} onClick={() => setPick({ lat: p.lat, lon: p.lon, label: p.name, fly: true })}>{p.name}</button>
           ))}
         </div>
       )}
       <div style={{ height: 300, borderRadius: 8, overflow: "hidden" }}>
         <MapView repoId={repoId} points={pts.data?.points ?? []} pick={pick} onPick={(lat, lon) => setPick({ lat, lon })} />
       </div>
-      <span className="muted" style={{ fontSize: 11.5 }}>Yalnızca MediaMind'da değişir, dosyalara yazılmaz. Tarih düzeltme penceresindeki “Asıl bilgiye dön” ile geri alınır.</span>
+      <span className="muted" style={{ fontSize: 11.5 }}>
+        {writes ? "Konum dosyanın kendisine de yazılır; fotoğraf, çekim tarihi ve dosya tarihleri değişmez. " : "Yalnızca MediaMind'da değişir, dosyalara yazılmaz. "}
+        Adres araması internetten (OpenStreetMap) yapılır; yalnızca yazdığın metin gönderilir.{sug.offline ? " İnternet yoksa yalnızca şehir/ilçe adları önerilir." : ""}
+      </span>
     </Sheet>
   );
 }

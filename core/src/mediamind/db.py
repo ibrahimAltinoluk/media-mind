@@ -296,6 +296,15 @@ MIGRATIONS: list[str] = [
     DROP TABLE video_frames;
     ALTER TABLE video_frames_v12 RENAME TO video_frames;
     """,
+    # v13: dosyaya konum yazılınca içerik özeti değişir; eski özet öğeye bağlı kalır
+    #      (açık ekranlardaki eski önizleme adresleri ve içe aktarmada "zaten var" denetimi için)
+    """
+    CREATE TABLE asset_aliases (
+        blake3   TEXT PRIMARY KEY,
+        asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE
+    );
+    CREATE INDEX asset_aliases_asset ON asset_aliases(asset_id);
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

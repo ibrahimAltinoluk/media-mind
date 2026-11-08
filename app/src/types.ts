@@ -212,6 +212,7 @@ export interface AppSettings {
   settings: {
     assistant: { provider: Provider; model: string; effort: "low" | "medium" | "high"; openrouter_model: string; gemini_model: string };
     agents: { read: boolean; tag: boolean; require_approval: boolean; send_previews: boolean };
+    files?: { write_location: boolean };
   };
   models: Record<string, string>;
   providers: Record<Provider, { label: string; key_url: string; key_prefix: string }>;

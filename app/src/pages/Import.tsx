@@ -179,7 +179,7 @@ function DeviceView({ device }: { device: DeviceInfo }) {
                         title={`${it.name} · ${fmtBytes(it.size)}${it.folder ? `\n${it.folder}` : ""}${it.imported ? " · zaten aktarılmış" : ""}`} aria-pressed={sel.has(it.key)}>
                         <img src={deviceThumbUrl(device.id, it.key)} alt="" loading="lazy" draggable={false} style={it.imported ? { opacity: 0.45 } : undefined}
                           onError={(e) => { e.currentTarget.style.visibility = "hidden"; }} />
-                        <span className="ph" style={{ position: "absolute", inset: 0, zIndex: -1 }}><Image size={22} /></span>
+                        <span className="ph" style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: -1 }}><Image size={22} /></span>
                         {it.kind === "video" && <span className="badge b-vid"><Play size={10} />{it.duration_ms ? fmtDuration(it.duration_ms) : "Video"}</span>}
                         {it.imported && <span className="badge" style={{ left: 6, bottom: 5, fontSize: 10 }}>Aktarıldı</span>}
                         {sel.has(it.key) && <span className="sel-check"><Check size={11} strokeWidth={3} /></span>}

@@ -278,3 +278,53 @@ def test_share_prepare_original_and_small(archive):
     assert gps == ""  # konum silindi
     import shutil
     shutil.rmtree(os.path.dirname(small[0]), ignore_errors=True)
+
+
+def test_location_written_to_file_preserving_metadata(archive):
+    """Konum özgün dosyaya yazılır; tarih, mtime, oluşturma tarihi, öğe kimliği ve türetilmiş dosyalar korunur."""
+    import os
+
+    from mediamind.media import writemeta
+
+    p = archive / "a.jpg"
+    make_image(p, 1, date="2024:08:14 19:42:00")
+    os.utime(p, ns=(1_600_000_000_123_456_789, 1_600_000_000_123_456_789))
+    repo = _ready(archive)
+    a = repo.db.execute("SELECT id, blake3 FROM assets").fetchone()
+    thumb = repo.thumb_path(a["blake3"], "s")
+    assert thumb.exists()
+    st0 = os.stat(p)
+
+    library.set_location(repo, [a["id"]], *IZMIR)
+    r = library.write_location_to_files(repo, [a["id"]])
+    assert r["written"] == 1 and not r["failed"]
+
+    lat, lon = writemeta.read_gps(p)
+    assert abs(lat - IZMIR[0]) < 1e-5 and abs(lon - IZMIR[1]) < 1e-5
+    st1 = os.stat(p)
+    assert st1.st_mtime_ns == st0.st_mtime_ns and st1.st_ino == st0.st_ino
+    assert st1.st_birthtime == st0.st_birthtime
+    date_tag = subprocess.run(["exiftool", "-s3", "-DateTimeOriginal", str(p)], capture_output=True, text=True).stdout.strip()
+    assert date_tag == "2024:08:14 19:42:00"
+
+    b = repo.db.execute("SELECT id, blake3 FROM assets").fetchone()
+    assert b["id"] == a["id"] and b["blake3"] != a["blake3"]
+    assert repo.thumb_path(b["blake3"], "s").exists() and not thumb.exists()
+    assert library.resolve_blake(repo, a["blake3"]) == b["blake3"]
+
+    # Yeniden tarama dosyayı değişmiş saymaz, yeni öğe oluşturmaz
+    rep = scan.scan(repo)
+    assert not rep.modified and not rep.new
+    assert repo.db.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 1
+
+    # Eski özetle önizleme ve özgün dosya hâlâ açılır (açık ekranlar)
+    c = TestClient(create_app("t"), headers={"x-mm-token": "t"})
+    assert c.get(f"/repos/{repo.id}/thumb/{a['blake3']}/s").status_code == 200
+    assert c.get(f"/repos/{repo.id}/original/{a['blake3']}").status_code == 200
+
+    # Geri alma dosyadaki konumu da kaldırır
+    ids = library.location_edit_ids(repo, [a["id"]])
+    library.revert_edits(repo, [a["id"]])
+    library.write_location_to_files(repo, ids)
+    assert writemeta.read_gps(p) == (None, None)
+    assert os.stat(p).st_mtime_ns == st0.st_mtime_ns

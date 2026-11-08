@@ -45,6 +45,8 @@ function General() {
   const { repoId, theme, setTheme, toast, trackJob } = useApp();
   const qc = useQueryClient();
   const { data: s } = useSummary(repoId);
+  const app = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+  const writeLoc = app.data?.settings.files?.write_location ?? true;
   const [name, setName] = useState<string | null>(null);
   const [primary, setPrimary] = useState<string | null>(null);
   const save = async (patch: Record<string, unknown>) => {
@@ -59,6 +61,14 @@ function General() {
           <div className="seg">
             {THEMES.map(([t, l]) => <button key={t} className={cls(theme === t && "on")} onClick={() => setTheme(t)}>{l}</button>)}
           </div>
+        </SRow>
+      </Section>
+      <Section title="Dosyalar" foot="Konum dosyanın içindeki bilgilere (EXIF) yazılır; fotoğrafın kendisi, çekim tarihi ve dosyanın oluşturulma/değiştirilme tarihleri değişmez. Böylece Fotoğraflar, Google Fotoğraflar gibi başka uygulamalar da konumu görür.">
+        <SRow label="Eklediğim konumu dosyaya da yaz" hint="Kapalıysa konum yalnız MediaMind'da tutulur, dosyalara dokunulmaz.">
+          <Switch label="Konumu dosyaya yaz" checked={writeLoc} onChange={async (v) => {
+            try { qc.setQueryData(["settings"], await api.updateSettings({ files: { write_location: v } })); }
+            catch (e) { toast(String((e as Error).message), { error: true }); }
+          }} />
         </SRow>
       </Section>
       {s && (
