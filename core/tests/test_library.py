@@ -122,6 +122,13 @@ def test_albums_manual_and_smart(archive):
     c.post(f"/repos/{rid}/albums/{man}/remove", json={"asset_ids": [items["a.jpg"]["asset_id"]]})
     assert c.get(f"/repos/{rid}/assets", params={"album": man}).json()["total"] == 0
     assert c.post(f"/repos/{rid}/albums/{smart}/items", json={"asset_ids": [1]}).status_code == 400
+    # Akıllı albüm listede sayı ve kapakla gelir
+    assert lst["2024"]["count"] == 1 and lst["2024"]["cover"] == items["b.jpg"]["blake3"]
+    # "Son N gün": bugüne göre; ikisi de eski
+    recent = c.post(f"/repos/{rid}/albums", json={"name": "Yeni", "kind": "smart", "rules": {"last_days": "30"}}).json()["id"]
+    assert c.get(f"/repos/{rid}/assets", params={"album": recent}).json()["total"] == 0
+    c.patch(f"/repos/{rid}/albums/{recent}", json={"rules": {"last_days": "36500"}})
+    assert c.get(f"/repos/{rid}/assets", params={"album": recent}).json()["total"] == 2
 
 
 def test_date_and_location_edits_survive_reanalysis(archive):

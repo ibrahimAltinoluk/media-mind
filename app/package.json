@@ -8,7 +8,11 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "dist": "tauri build && ./scripts/bundle-core.sh"
+    "dist": "tauri build && ./scripts/bundle-core.sh",
+    "dist:intel": "../scripts/build.sh intel",
+    "dist:arm64": "../scripts/build.sh arm64",
+    "dist:all": "../scripts/build.sh all",
+    "dist:list": "../scripts/build.sh list"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.106.1",

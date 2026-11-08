@@ -305,6 +305,16 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX asset_aliases_asset ON asset_aliases(asset_id);
     """,
+    # v14: "bunu bir daha önerme" denen gruplar (excluded='ignored'); grup kimliği gizlenenler listesi ve geri alma için
+    """
+    ALTER TABLE faces ADD COLUMN ignore_group INTEGER;
+    CREATE INDEX faces_ignore_group ON faces(ignore_group);
+    """,
+    # v15: konum önerisinde "bunu atla" denenler; kişinin doğum tarihi (zaman çizelgesinde yaş)
+    """
+    CREATE TABLE geo_skip (asset_id INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE);
+    ALTER TABLE persons ADD COLUMN birth_date TEXT;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

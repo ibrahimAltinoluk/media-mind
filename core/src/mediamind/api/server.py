@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from dataclasses import asdict
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -474,6 +475,9 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
                 region, month = region or r.get("region") or None, month or r.get("month") or None
                 favorite = favorite or bool(r.get("favorite"))
                 date_from, date_to = date_from or r.get("date_from") or None, date_to or r.get("date_to") or None
+                if not date_from and str(r.get("last_days") or "").isdigit():
+                    # "Son N gün": her açılışta bugüne göre hesaplanır
+                    date_from = (datetime.now() - timedelta(days=int(r["last_days"]))).date().isoformat()
                 search = search or r.get("search") or None
             else:
                 extra += " AND a.id IN (SELECT asset_id FROM album_items WHERE album_id=?)"
@@ -772,7 +776,17 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
 
     @app.get("/repos/{repo_id}/albums")
     def albums_list(repo_id: str):
-        return {"albums": library.albums(pool.get(repo_id))}
+        out = library.albums(pool.get(repo_id))
+        for a in out:
+            # Akıllı albüm: sayı ve kapak süzgeçle hesaplanır (anlamsal arama içerenler yavaş olduğundan sayılmaz)
+            if a["kind"] == "smart" and not (a["rules"] or {}).get("search"):
+                try:
+                    r = assets(repo_id, album=a["id"], limit=1, offset=0)
+                    a["count"] = r["total"]
+                    a["cover"] = r["items"][0]["blake3"] if r["items"] else None
+                except Exception:  # noqa: BLE001 — bozuk kural listeyi düşürmesin
+                    pass
+        return {"albums": out}
 
     @app.post("/repos/{repo_id}/albums")
     def album_new(repo_id: str, name: str = Body(...), kind: str = Body("manual"), rules: dict | None = Body(None),
@@ -816,6 +830,37 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
             return {"updated": library.set_dates(pool.get(repo_id), asset_ids, shift_seconds, value)}
         except ValueError as e:
             raise _bad(e)
+
+    @app.post("/repos/{repo_id}/geo/suggest")
+    def geo_suggest(repo_id: str, gpx: str | None = Body(None, embed=True)):
+        from .. import geoinfer
+
+        try:
+            return geoinfer.suggestions(pool.get(repo_id), gpx)
+        except ValueError as e:
+            raise _bad(e)
+
+    @app.post("/repos/{repo_id}/geo/apply")
+    def geo_apply(repo_id: str, items: list[dict] = Body(..., embed=True)):
+        repo = pool.get(repo_id)
+        try:
+            rows = [(int(i["asset_id"]), float(i["lat"]), float(i["lon"])) for i in items]
+            n = library.set_locations(repo, rows)
+        except (KeyError, TypeError, ValueError) as e:
+            raise _bad(ValueError(str(e)))
+        return {"updated": n, "job": write_location_job(repo, [r[0] for r in rows])}
+
+    @app.post("/repos/{repo_id}/geo/skip")
+    def geo_skip(repo_id: str, asset_ids: list[int] = Body(..., embed=True)):
+        from .. import geoinfer
+
+        return {"skipped": geoinfer.skip(pool.get(repo_id), asset_ids)}
+
+    @app.delete("/repos/{repo_id}/geo/skip")
+    def geo_skip_clear(repo_id: str):
+        from .. import geoinfer
+
+        return {"cleared": geoinfer.clear_skips(pool.get(repo_id))}
 
     def write_location_job(repo: Repo, ids: list[int]) -> dict | None:
         """Ayar açıksa konumu özgün dosyalara yazan arka plan işi (dosya başına kısa kilit)."""
@@ -1577,6 +1622,24 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
 
         return {"faces": people_mod.dissolve_cluster(pool.get(repo_id), cluster_id)}
 
+    @app.post("/repos/{repo_id}/people/clusters/{cluster_id}/ignore")
+    def cluster_ignore(repo_id: str, cluster_id: int):
+        from ..ml import people as people_mod
+
+        return {"faces": people_mod.ignore_cluster(pool.get(repo_id), cluster_id)}
+
+    @app.get("/repos/{repo_id}/people/ignored")
+    def people_ignored(repo_id: str):
+        from ..ml import people as people_mod
+
+        return people_mod.ignored(pool.get(repo_id))
+
+    @app.post("/repos/{repo_id}/people/ignored/{group}/restore")
+    def people_ignored_restore(repo_id: str, group: int):
+        from ..ml import people as people_mod
+
+        return {"faces": people_mod.restore_ignored(pool.get(repo_id), group)}
+
     @app.patch("/repos/{repo_id}/people/{person_id}")
     def person_rename(repo_id: str, person_id: int, name: str = Body(..., embed=True)):
         from ..ml import people as people_mod
@@ -1608,6 +1671,34 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
             "ORDER BY f2.quality DESC LIMIT 1) ORDER BY f.quality DESC LIMIT ?",
             (person_id, limit))]
 
+    @app.get("/repos/{repo_id}/people/{person_id}/timeline")
+    def person_timeline(repo_id: str, person_id: int):
+        repo = pool.get(repo_id)
+        p = repo.db.execute("SELECT id, name, kind, birth_date FROM persons WHERE id=?", (person_id,)).fetchone()
+        if p is None:
+            raise HTTPException(404, "Kişi bulunamadı")
+        # Fotoğraf başına en net yüz, çekim tarihine göre (tarihi yalnız dosya saatinden gelenler güvenilmez)
+        faces = [dict(r) for r in repo.db.execute(
+            "SELECT f.id, f.asset_id, f.quality, a.taken_at FROM faces f JOIN assets a ON a.id=f.asset_id "
+            "WHERE f.person_id=? AND f.frame_ms IS NULL AND a.taken_at IS NOT NULL AND COALESCE(a.taken_at_source,'')<>'mtime' "
+            "AND EXISTS (SELECT 1 FROM files fl WHERE fl.asset_id=a.id AND fl.state='present') "
+            "AND f.id=(SELECT f2.id FROM faces f2 WHERE f2.asset_id=f.asset_id AND f2.person_id=f.person_id "
+            "ORDER BY f2.quality DESC LIMIT 1) ORDER BY a.taken_at", (person_id,))]
+        return {"person": dict(p), "faces": faces}
+
+    @app.put("/repos/{repo_id}/people/{person_id}/birth")
+    def person_birth(repo_id: str, person_id: int, birth_date: str | None = Body(None, embed=True)):
+        if birth_date:
+            try:
+                birth_date = datetime.fromisoformat(birth_date).date().isoformat()
+            except ValueError:
+                raise HTTPException(400, "Geçersiz tarih")
+        repo = pool.get(repo_id)
+        with repo.lock(), repo.db as conn:
+            if not conn.execute("UPDATE persons SET birth_date=? WHERE id=?", (birth_date or None, person_id)).rowcount:
+                raise HTTPException(404, "Kişi bulunamadı")
+        return {"birth_date": birth_date or None}
+
     @app.put("/repos/{repo_id}/people/{person_id}/cover")
     def person_cover(repo_id: str, person_id: int, face_id: int | None = Body(None, embed=True)):
         from ..ml import people as people_mod
@@ -1618,7 +1709,7 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
             raise HTTPException(400, str(e))
 
     @app.get("/repos/{repo_id}/faces/{face_id}/crop")
-    def face_crop(repo_id: str, face_id: int):
+    def face_crop(repo_id: str, face_id: int, size: int = 160):
         from PIL import Image as _Image
 
         repo = pool.get(repo_id)
@@ -1626,9 +1717,13 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
         if r is None:
             raise HTTPException(404, "Yüz bulunamadı")
         # Yeniden analizde yüz kimlikleri tekrar kullanılabilir; önbellek adı içeriğe ve konuma bağlı
-        target = repo.mm / "faces" / f"{face_id}_{r['blake3'][:10]}_{int(r['x1'] * 1000)}.webp"
+        size = 400 if size > 160 else 160  # büyük boy: zaman çizelgesi gösterimi (önizlemenin büyüğünden kesilir)
+        suffix = "" if size == 160 else f"_{size}"
+        target = repo.mm / "faces" / f"{face_id}_{r['blake3'][:10]}_{int(r['x1'] * 1000)}{suffix}.webp"
         if not target.exists():
-            src = repo.thumb_path(r["blake3"], "m")
+            src = repo.thumb_path(r["blake3"], "l" if size > 160 else "m")
+            if not src.exists():
+                src = repo.thumb_path(r["blake3"], "m")
             if not src.exists():
                 raise HTTPException(404, "Önizleme yok")
             with _Image.open(src) as im:
@@ -1636,7 +1731,7 @@ def create_app(token: str | None = None, watch: bool = False) -> FastAPI:
                 cx, cy = (r["x1"] + r["x2"]) / 2 * w, (r["y1"] + r["y2"]) / 2 * h
                 side = max((r["x2"] - r["x1"]) * w, (r["y2"] - r["y1"]) * h) * 1.5
                 box = (max(0, cx - side / 2), max(0, cy - side / 2), min(w, cx + side / 2), min(h, cy + side / 2))
-                crop = im.convert("RGB").crop(tuple(int(v) for v in box)).resize((160, 160))
+                crop = im.convert("RGB").crop(tuple(int(v) for v in box)).resize((size, size))
                 target.parent.mkdir(parents=True, exist_ok=True)
                 crop.save(target, "WEBP", quality=85)
         return FileResponse(target, media_type="image/webp", headers={"Cache-Control": "public, max-age=86400"})

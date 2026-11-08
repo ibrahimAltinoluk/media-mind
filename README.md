@@ -15,20 +15,26 @@ brew install exiftool ffmpeg rustup uv node
 rustup default stable
 ```
 
-## Uygulamayı çalıştırma
+## Uygulamayı çalıştırma ve dağıtım paketleri
 
 ```sh
 cd core && uv sync            # çekirdeği kur (core/.venv)
 cd ../app && npm install
 npm run tauri dev             # geliştirme modunda aç
-npm run tauri build           # app/src-tauri/target/release/bundle/macos/MediaMind.app üretir
 ```
 
-Uygulama açılırken çekirdeği (`core/.venv/bin/mediamind serve`) boş bir portta ve rastgele bir oturum token'ıyla
-kendisi başlatır, kapanırken durdurur. Başka bir çekirdek kullanmak için `MEDIAMIND_CORE=/yol/mediamind`.
+### Çoklu Mimari Dağıtım Paketleri (Intel & Apple Silicon)
 
-> Not: Şimdilik derlenen `.app`, çekirdeği bu depodaki `core/.venv` içinden çalıştırır (Python gömülü değil).
-> Dağıtım için Python çalışma zamanının pakete gömülmesi ileriki bir adım.
+Hem eski 2012+ Intel Mac'ler (`x86_64`, macOS 10.15+) hem de yeni Apple Silicon (`arm64`, M1–M4) için paket oluşturma:
+
+```sh
+./scripts/build.sh intel       # 2012+ Intel Mac için bağımsız paket üretir
+./scripts/build.sh arm64       # Apple Silicon Mac için paket üretir
+./scripts/build.sh all         # İki mimari için sırayla üretir
+./scripts/build.sh list        # Üretilen paketleri ve mimarilerini listeler
+```
+
+Çıktılar `dist-releases/intel-x86_64/` ve `dist-releases/apple-silicon-arm64/` klasörlerine `.app` ve taşımaya hazır `.zip` formatında yerleştirilir. Ayrıntılar için: [docs/BUILD_INTEL_MAC.md](docs/BUILD_INTEL_MAC.md).
 
 ## Komut satırı
 

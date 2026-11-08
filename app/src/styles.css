@@ -610,3 +610,29 @@ html.busy, html.busy * { cursor: progress !important; }
 .geo-sugg .srow { min-height: 38px; }
 .geo-ic { flex: none; display: flex; color: var(--muted); }
 .geo-sugg .srow.hi .geo-ic { color: rgba(255, 255, 255, 0.85); }
+
+/* Akıllı albüm kuralları */
+.smart-form { gap: 8px; }
+.smart-row { display: flex; align-items: center; gap: 10px; min-height: 28px; }
+.smart-row > span:first-child { width: 64px; flex: none; color: var(--muted); font-size: 12.5px; }
+.smart-row > .field { flex: 1; min-width: 0; }
+input.field, select.field { outline: none; }
+input.field:focus, select.field:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
+.smart-hint { margin: -4px 0 0 74px; font-size: 11.5px; }
+
+/* Kişinin yıllar içindeki yüzleri */
+.tl-year { display: flex; flex-direction: column; gap: 6px; }
+.tl-year h3 { margin: 0; font: 600 14px/1.3 var(--font-display); display: flex; gap: 8px; align-items: baseline; }
+.tl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 4px; }
+.tl-grid button { border: 0; padding: 0; aspect-ratio: 1 / 1; border-radius: 8px; overflow: hidden; cursor: pointer; background: var(--tile-bg); }
+.tl-grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tl-show { position: fixed; inset: 0; z-index: 400; background: #000; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; }
+.tl-show .face { width: min(62vh, 80vw); aspect-ratio: 1 / 1; border-radius: 50%; overflow: hidden; position: relative; background: #111; }
+.tl-show .face img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; animation: tlfade .4s ease; }
+@keyframes tlfade { from { opacity: 0; } to { opacity: 1; } }
+.tl-show .cap { font: 600 22px/1.2 var(--font-display); text-align: center; }
+.tl-show .cap small { display: block; font: 400 13px/1.4 var(--font); opacity: .7; margin-top: 4px; }
+.tl-show .bar { width: min(62vh, 80vw); height: 3px; border-radius: 2px; background: rgba(255,255,255,.18); overflow: hidden; }
+.tl-show .bar i { display: block; height: 100%; background: #fff; }
+.tl-show .ctl { display: flex; gap: 8px; }
+.tl-show .ctl .btn { background: rgba(255,255,255,.14); color: #fff; box-shadow: none; }

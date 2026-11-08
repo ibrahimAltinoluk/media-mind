@@ -13,6 +13,7 @@ import { EMPTY_FILTER, useApp, useSummary, type LibraryFilter, type LibraryView 
 import type { AssetItem, FolderEntry } from "../types";
 import { cls, fmtDuration, fmtInt, monthLabel, placeText } from "../util";
 import { SearchField, type SearchToken } from "../components/SearchField";
+import { SmartAlbumDialog, rulesText } from "../components/SmartAlbum";
 
 const MONTH_TR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
 const monthName = (m: string) => `${MONTH_TR[Number(m) - 1] ?? m} (her yıl)`;
@@ -115,6 +116,7 @@ export function Library() {
   const [dialog, setDialog] = useState<{ kind: "date" | "location" | "export" | "compress"; ids: number[]; sample?: string | null; bytes?: number } | null>(null);
   const closeDialog = useCallback(() => setDialog(null), []);
   const [saveSmart, setSaveSmart] = useState<string | null>(null);
+  const [editSmart, setEditSmart] = useState(false);
   const albumsQ = useQuery({ queryKey: ["albums", repoId], queryFn: () => api.albums(repoId!), enabled: !!repoId });
   const trash = useTrashFlow();
   const qc = useQueryClient();
@@ -576,6 +578,14 @@ export function Library() {
             ))}
           </nav>
         )}
+        {album?.kind === "smart" && (
+          <div className="filterbar">
+            <span className="muted ellipsis" style={{ fontSize: 12 }}>Akıllı albüm · {rulesText(album.rules, f?.people) || "tüm fotoğraflar"}</span>
+            <span className="grow" />
+            <button className="btn sm" onClick={() => setEditSmart(true)}>Kuralları düzenle…</button>
+          </div>
+        )}
+        {editSmart && album?.kind === "smart" && <SmartAlbumDialog repoId={repoId} album={album} onClose={() => setEditSmart(false)} />}
         {chips.length > 0 && (
           <div className="filterbar">
             <span className="muted" style={{ fontSize: 12 }}>{fmtInt(chips.length)} süzgeç{chips.filter((c) => c.kind === "person").length > 1 ? " · seçilen kişilerin birlikte olduğu fotoğraflar" : ""}</span>

@@ -304,6 +304,29 @@ export interface FaceCluster {
   animal?: string;
 }
 
+export interface GeoGroup {
+  key: string;
+  day: string;
+  place: string;
+  region: string | null;
+  country_code: string | null;
+  source: "nearby" | "gpx";
+  count: number;
+  lat: number;
+  lon: number;
+  items: { asset_id: number; blake3: string; kind: string; taken_at: string; lat: number; lon: number; gap_s: number }[];
+}
+
+export interface GeoSuggestions { groups: GeoGroup[]; total: number; missing: number; skipped: number }
+
+export interface IgnoredGroup {
+  group: number;
+  animal: string | null;
+  faces: number;
+  photos: number;
+  sample_faces: number[];
+}
+
 export interface VideoInfo {
   scenes: { idx: number; start_ms: number; end_ms: number; key_ms: number }[];
   people: { person_id: number; name: string; segments: [number, number][] }[];

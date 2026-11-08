@@ -6,7 +6,9 @@ import { Toolbar } from "../components/Toolbar";
 import { PersonPicker } from "../components/PersonPicker";
 import { Popover } from "../components/Popover";
 import { EMPTY_FILTER, useApp } from "../state";
-import type { AssetItem, FaceCluster, Person } from "../types";
+import type { FaceCluster, Person } from "../types";
+import { assetItem } from "../assetItem";
+import { PersonTimeline } from "../components/PersonTimeline";
 import { cls, fmtDate, fmtInt } from "../util";
 
 function Avatar({ repoId, face, size = 72 }: { repoId: string; face: number | null; size?: number }) {
@@ -15,18 +17,6 @@ function Avatar({ repoId, face, size = 72 }: { repoId: string; face: number | nu
       {face && <img src={faceUrl(repoId, face)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />}
     </span>
   );
-}
-
-/** Asset ayrıntısından görüntüleyici öğesi üretir (kümeden fotoğraf açmak için). */
-async function assetItem(repoId: string, assetId: number): Promise<AssetItem> {
-  const d = await api.asset(repoId, assetId);
-  const f = d.files.find((x) => x.state === "present") ?? d.files[0];
-  return {
-    file_id: f.id, rel_path: f.rel_path, tracked: f.tracked, size: d.size, asset_id: d.id, blake3: d.blake3, kind: d.kind, mime: d.mime,
-    width: d.width, height: d.height, duration_ms: d.duration_ms, taken_at: d.taken_at, taken_at_source: d.taken_at_source,
-    camera_model: d.camera_model, rating: d.rating, favorite: d.favorite, lat: d.lat, lon: d.lon, place: d.place, region: d.region,
-    country_code: d.country_code, copies: 1, in_dup: 0,
-  };
 }
 
 function FaceThumb({ repoId, faceId, assetId, onChange }: { repoId: string; faceId: number; assetId: number; onChange: () => void }) {
@@ -58,6 +48,120 @@ function FaceThumb({ repoId, faceId, assetId, onChange }: { repoId: string; face
   );
 }
 
+type PeopleData = { persons: Person[]; clusters: FaceCluster[]; pet_clusters?: FaceCluster[] };
+
+/** "Bir daha önerme": grubu listeden kaldırır; geri alma hem bildirimden hem "Gizlenenler"den yapılır. */
+function useIgnoreCluster(repoId: string, onChange: () => void) {
+  const { toast } = useApp();
+  const qc = useQueryClient();
+  return async (c: FaceCluster) => {
+    const prev = qc.getQueryData<PeopleData>(["people", repoId]);
+    qc.setQueryData<PeopleData>(["people", repoId], (old) => old && {
+      ...old, clusters: old.clusters.filter((x) => x.cluster_id !== c.cluster_id),
+      pet_clusters: old.pet_clusters?.filter((x) => x.cluster_id !== c.cluster_id),
+    });
+    try {
+      await api.ignoreCluster(repoId, c.cluster_id);
+      toast("Bu grup bir daha önerilmeyecek. Kişiler › ⋯ › Gizlenenler'den geri getirebilirsin.", {
+        action: { label: "Geri al", run: async () => { await api.restoreIgnored(repoId, c.cluster_id); onChange(); } },
+      });
+    } catch (e) {
+      if (prev) qc.setQueryData(["people", repoId], prev);
+      toast(String((e as Error).message), { error: true });
+    }
+    onChange();
+  };
+}
+
+/** Önerilmesin denen gruplar ve "yüz değil" denen yüzler; yanlışlıkla gizleneni geri getirmek için. */
+function IgnoredSheet({ repoId, onClose, onChange }: { repoId: string; onClose: () => void; onChange: () => void }) {
+  const { toast } = useApp();
+  const q = useQuery({ queryKey: ["peopleIgnored", repoId], queryFn: () => api.ignoredPeople(repoId) });
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [onClose]);
+  const run = async (key: string, fn: () => Promise<unknown>, msg: string) => {
+    setBusy(key);
+    try {
+      await fn();
+      toast(msg);
+      await q.refetch();
+      onChange();
+    } catch (e) {
+      toast(String((e as Error).message), { error: true });
+    }
+    setBusy(null);
+  };
+  const groups = q.data?.groups ?? [];
+  const notFaces = q.data?.not_faces ?? [];
+  return (
+    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="dialog" style={{ maxWidth: 600 }} role="dialog" aria-modal="true" aria-labelledby="ignored-title">
+        <div className="body" style={{ gap: 4, paddingTop: 20 }}>
+          <h2 id="ignored-title" style={{ margin: 0, font: "700 17px/1.3 var(--font-display)" }}>Gizlenenler</h2>
+          <span className="muted" style={{ fontSize: 12 }}>Bir daha önerilmesin dediğin gruplar ve yüz olmadığını söylediğin kutular. Geri getirdiğinde yeniden önerilir.</span>
+        </div>
+        <div className="body" style={{ paddingTop: 0, maxHeight: "60vh", overflowY: "auto" }}>
+          {q.isLoading && <div className="loading-msg" style={{ padding: 40 }}><span className="spin" />Yükleniyor…</div>}
+          {q.data && !groups.length && !notFaces.length && <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>Gizlenen bir şey yok.</div>}
+          {groups.length > 0 && (
+            <>
+              <div className="lbl">Önerilmeyen gruplar</div>
+              <div className="people-grid" style={{ ["--av" as string]: "72px" }}>
+                {groups.map((g) => (
+                  <div key={g.group} className="person" style={{ cursor: "default" }}>
+                    <Avatar repoId={repoId} face={g.sample_faces[0] ?? null} size={72} />
+                    <span className="muted" style={{ fontSize: 11.5 }}>{g.animal ? <span style={{ textTransform: "capitalize" }}>{g.animal} · </span> : null}{fmtInt(g.photos)} fotoğraf</span>
+                    <button className="btn sm" disabled={busy === `g${g.group}`}
+                      onClick={() => run(`g${g.group}`, () => api.restoreIgnored(repoId, g.group), "Grup geri getirildi; yeniden gruplanınca listede görünür")}>Geri getir</button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+          {notFaces.length > 0 && (
+            <>
+              <div className="lbl" style={{ marginTop: groups.length ? 12 : 0 }}>Yüz değil dediklerin</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(0, 1fr))", gap: 4 }}>
+                {notFaces.map((f) => (
+                  <button key={f.face_id} disabled={busy === `f${f.face_id}`} title="Yüz olarak geri getir" aria-label="Yüz olarak geri getir"
+                    onClick={() => run(`f${f.face_id}`, () => api.excludeFace(repoId, f.face_id, null), "Yüz geri getirildi")}
+                    style={{ border: 0, padding: 0, aspectRatio: "1 / 1", borderRadius: 6, overflow: "hidden", cursor: "pointer", background: "var(--tile-bg)" }}>
+                    <img src={faceUrl(repoId, f.face_id)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />
+                  </button>
+                ))}
+              </div>
+              <span className="muted" style={{ fontSize: 11.5 }}>Geri getirmek için kutuya tıkla.</span>
+            </>
+          )}
+        </div>
+        <footer><button className="btn pri" onClick={onClose} autoFocus>Bitti</button></footer>
+      </div>
+    </div>
+  );
+}
+
+/** Küme kutucuğunun ⋯ menüsü (sağ tık da açar). */
+function TileMenu({ c, onIgnore, children }: { c: FaceCluster; onIgnore: (c: FaceCluster) => void; children: React.ReactNode }) {
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const close = useCallback(() => setAnchor(null), []);
+  return (
+    <div className="person-wrap" onContextMenu={(e) => { e.preventDefault(); setAnchor(e.currentTarget.querySelector<HTMLElement>(".more")); }}>
+      {children}
+      <button className={cls("ibtn more", !!anchor && "on")} aria-expanded={!!anchor} aria-label="Grup seçenekleri"
+        onClick={(e) => (anchor ? close() : setAnchor(e.currentTarget))}><Dots size={15} /></button>
+      {anchor && (
+        <Popover anchor={anchor} onClose={close} width={210}>
+          <button className="mitem" onClick={() => { close(); onIgnore(c); }}>Bir daha önerme</button>
+        </Popover>
+      )}
+    </div>
+  );
+}
+
 function ClusterSheet({ repoId, c, onClose, onChange }: { repoId: string; c: FaceCluster; onClose: () => void; onChange: () => void }) {
   const { toast } = useApp();
   const qc = useQueryClient();
@@ -85,6 +189,7 @@ function ClusterSheet({ repoId, c, onClose, onChange }: { repoId: string; c: Fac
       setSaving(null);
     }
   };
+  const ignore = useIgnoreCluster(repoId, onChange);
   const dissolve = async () => {
     const r = await api.dissolveCluster(repoId, c.cluster_id);
     toast(`${fmtInt(r.faces)} yüz ayrı tutulacak. Fotoğraflarda tek tek ad verebilirsin.`);
@@ -122,7 +227,10 @@ function ClusterSheet({ repoId, c, onClose, onChange }: { repoId: string; c: Fac
           <span className="muted" style={{ fontSize: 11.5 }}>Aralarında başka biri varsa yüzüne tıklayıp “Bu kişi değil” de.</span>
         </div>
         <footer style={{ justifyContent: "space-between" }}>
-          <button className="btn ghost" onClick={dissolve} title="Bu gruptaki yüzler aynı kişiye ait değil">Hepsi farklı kişiler</button>
+          <div className="row" style={{ gap: 4 }}>
+            <button className="btn ghost" onClick={dissolve} title="Bu gruptaki yüzler aynı kişiye ait değil">Hepsi farklı kişiler</button>
+            <button className="btn ghost" onClick={() => { onClose(); ignore(c); }} title="Tanımadığın biri ya da yüz olmayan şeyler; Gizlenenler'den geri getirilebilir">Bir daha önerme</button>
+          </div>
           <button className="btn" onClick={onClose}>Bitti</button>
         </footer>
       </div>
@@ -165,7 +273,9 @@ function SuggestTile({ repoId, c, onOpen, onChange }: { repoId: string; c: FaceC
     }
     setBusy(false);
   };
+  const ignore = useIgnoreCluster(repoId, onChange);
   return (
+    <TileMenu c={c} onIgnore={ignore}>
     <div className="person suggest-tile">
       <button className="person" style={{ padding: 0 }} onClick={onOpen} title="Bu gruptaki yüzleri gör">
         <Avatar repoId={repoId} face={c.sample_faces[0]} size={92} />
@@ -177,6 +287,7 @@ function SuggestTile({ repoId, c, onOpen, onChange }: { repoId: string; c: FaceC
         <button className="btn sm pri" disabled={busy} onClick={yes} aria-label={`Evet, ${s.name}`}>Evet</button>
       </div>
     </div>
+    </TileMenu>
   );
 }
 
@@ -225,14 +336,17 @@ function MergeSuggestions({ repoId, onChange }: { repoId: string; onChange: () =
   );
 }
 
-function ClusterTile({ repoId, c, onOpen }: { repoId: string; c: FaceCluster; onOpen: () => void }) {
+function ClusterTile({ repoId, c, onOpen, onChange }: { repoId: string; c: FaceCluster; onOpen: () => void; onChange: () => void }) {
+  const ignore = useIgnoreCluster(repoId, onChange);
   return (
-    <button className="person" onClick={onOpen}>
-      <Avatar repoId={repoId} face={c.sample_faces[0]} size={92} />
-      <span className="add">{c.suggestion ? `${c.suggestion.name}?` : "Ad ekle"}</span>
-      {c.animal && <span className="muted" style={{ fontSize: 11, textTransform: "capitalize" }}>{c.animal}</span>}
-      <span className="muted" style={{ fontSize: 11.5 }}>{fmtInt(c.photos)} fotoğraf</span>
-    </button>
+    <TileMenu c={c} onIgnore={ignore}>
+      <button className="person" onClick={onOpen}>
+        <Avatar repoId={repoId} face={c.sample_faces[0]} size={92} />
+        <span className="add">{c.suggestion ? `${c.suggestion.name}?` : "Ad ekle"}</span>
+        {c.animal && <span className="muted" style={{ fontSize: 11, textTransform: "capitalize" }}>{c.animal}</span>}
+        <span className="muted" style={{ fontSize: 11.5 }}>{fmtInt(c.photos)} fotoğraf</span>
+      </button>
+    </TileMenu>
   );
 }
 
@@ -302,6 +416,8 @@ function PersonCard({ repoId, p, all, onChange }: { repoId: string; p: Person; a
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [coverOpen, setCoverOpen] = useState(false);
+  const [timeline, setTimeline] = useState(false);
+  const closeTimeline = useCallback(() => setTimeline(false), []);
   const close = useCallback(() => { setAnchor(null); setMode("menu"); setQuery(""); }, []);
   const closeCover = useCallback(() => setCoverOpen(false), []);
   const open = () => {
@@ -348,6 +464,8 @@ function PersonCard({ repoId, p, all, onChange }: { repoId: string; p: Person; a
         <Popover anchor={anchor} onClose={close} width={250}>
           {mode === "menu" ? (
             <>
+              <button className="mitem" onClick={() => { close(); setTimeline(true); }}>Yıllar içinde…</button>
+              <div className="msep" />
               <button className="mitem" onClick={() => { close(); setRenaming(p.name); }}>Yeniden adlandır</button>
               <button className="mitem" onClick={() => { close(); setCoverOpen(true); }}>Kapak fotoğrafını değiştir…</button>
               {all.length > 1 && <button className="mitem" onClick={() => setMode("merge")}>Başka bir kişiyle birleştir…</button>}
@@ -377,6 +495,7 @@ function PersonCard({ repoId, p, all, onChange }: { repoId: string; p: Person; a
         </Popover>
       )}
       {coverOpen && <CoverSheet repoId={repoId} p={p} onClose={closeCover} />}
+      {timeline && <PersonTimeline repoId={repoId} personId={p.id} onClose={closeTimeline} />}
     </div>
   );
 }
@@ -392,9 +511,12 @@ export function People() {
   const [showAllSug, setShowAllSug] = useState(false);
   const [sheet, setSheet] = useState<number | null>(null);
   const [menu, setMenu] = useState<HTMLElement | null>(null);
+  const [ignoredOpen, setIgnoredOpen] = useState(false);
   const closeMenu = useCallback(() => setMenu(null), []);
+  const closeIgnored = useCallback(() => setIgnoredOpen(false), []);
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["people", repoId] });
+    qc.invalidateQueries({ queryKey: ["peopleIgnored", repoId] });
     qc.invalidateQueries({ queryKey: ["facets", repoId] });
     qc.invalidateQueries({ queryKey: ["mergeSug", repoId] });
   };
@@ -422,6 +544,7 @@ export function People() {
           <button className="mitem" onClick={async () => { closeMenu(); trackJob(await api.recluster(repoId)); toast("Yüzler arka planda yeniden gruplanıyor; bitince liste kendiliğinden yenilenir."); }}>
             Yüzleri yeniden grupla
           </button>
+          <button className="mitem" onClick={() => { closeMenu(); setIgnoredOpen(true); }}>Gizlenenler…</button>
         </Popover>
       )}
       <div className="scroll">
@@ -470,7 +593,7 @@ export function People() {
               <span className="muted" style={{ fontSize: 12 }}>En sık görünenler önce. Tanıdığın birine ad ver, benzer yüzler de etiketlensin.</span>
               <div className="people-grid" style={{ ["--av" as string]: "92px", marginTop: 8 }}>
                 {(showAll ? unnamed : unnamed.slice(0, 24)).map((c) => (
-                  <ClusterTile key={c.cluster_id} repoId={repoId} c={c} onOpen={() => setSheet(c.cluster_id)} />
+                  <ClusterTile key={c.cluster_id} repoId={repoId} c={c} onOpen={() => setSheet(c.cluster_id)} onChange={refresh} />
                 ))}
               </div>
               {unnamed.length > 24 && !showAll && <button className="btn ghost" style={{ alignSelf: "flex-start" }} onClick={() => setShowAll(true)}>Tümünü göster ({fmtInt(unnamed.length)})</button>}
@@ -491,7 +614,7 @@ export function People() {
                   <div className="people-grid" style={{ ["--av" as string]: "92px" }}>
                     {petClusters.slice(0, 48).map((c) => c.suggestion
                       ? <SuggestTile key={c.cluster_id} repoId={repoId} c={c} onOpen={() => setSheet(c.cluster_id)} onChange={refresh} />
-                      : <ClusterTile key={c.cluster_id} repoId={repoId} c={c} onOpen={() => setSheet(c.cluster_id)} />)}
+                      : <ClusterTile key={c.cluster_id} repoId={repoId} c={c} onOpen={() => setSheet(c.cluster_id)} onChange={refresh} />)}
                   </div>
                 </>
               )}
@@ -507,6 +630,7 @@ export function People() {
           )}
         </div>
       </div>
+      {ignoredOpen && <IgnoredSheet repoId={repoId} onClose={closeIgnored} onChange={refresh} />}
       {openCluster && <ClusterSheet repoId={repoId} c={openCluster} onClose={() => setSheet(null)} onChange={refresh} />}
     </>
   );

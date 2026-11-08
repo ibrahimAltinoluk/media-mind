@@ -32,7 +32,7 @@ export const EMPTY_FILTER: LibraryFilter = { q: "", year: "", place: "", camera:
 export type Theme = "system" | "light" | "dark";
 
 /** İş türü → bittiğinde yenilenecek sorgular (listede olmayan türler her şeyi yeniler: tarama, plan, içe aktarma…) */
-const PEOPLE_KEYS = ["people", "personFaces", "mergeSug", "asset", "facets", "summary"];
+const PEOPLE_KEYS = ["people", "personFaces", "personTimeline", "peopleIgnored", "mergeSug", "asset", "facets", "summary"];
 const JOB_AFFECTS: Record<string, string[]> = {
   people: PEOPLE_KEYS,
   people_pets: PEOPLE_KEYS,

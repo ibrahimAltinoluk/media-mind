@@ -4,7 +4,8 @@ import { Popover } from "./Popover";
 import { DeviceIcon } from "../pages/Import";
 import { api, isTauri } from "../api";
 import { EMPTY_FILTER, useApp, useSummary, type LibraryView, type Page } from "../state";
-import type { Probe } from "../types";
+import type { Album, Probe } from "../types";
+import { SmartAlbumDialog, rulesText } from "./SmartAlbum";
 import { cls, fmtInt } from "../util";
 import { Activity } from "./Activity";
 import { AddRepoDialog } from "./AddRepoDialog";
@@ -191,7 +192,11 @@ function Albums() {
   const [creating, setCreating] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ el: HTMLElement; id: number; name: string } | null>(null);
   const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(null);
+  const [addMenu, setAddMenu] = useState<HTMLElement | null>(null);
+  const [smartEdit, setSmartEdit] = useState<Album | "new" | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
+  const closeAdd = useCallback(() => setAddMenu(null), []);
+  const closeSmart = useCallback(() => setSmartEdit(null), []);
   const refresh = () => qc.invalidateQueries({ queryKey: ["albums", repoId] });
   const create = async () => {
     const name = (creating ?? "").trim();
@@ -221,7 +226,7 @@ function Albums() {
     <>
       <div className="sec-title row" style={{ paddingRight: 2 }}>
         <span className="grow">Albümler</span>
-        <button className="ibtn" style={{ width: 20, height: 20 }} onClick={() => setCreating("")} aria-label="Yeni albüm" title="Yeni albüm"><Plus size={13} /></button>
+        <button className={cls("ibtn", !!addMenu && "on")} style={{ width: 20, height: 20 }} onClick={(e) => setAddMenu(addMenu ? null : e.currentTarget)} aria-label="Yeni albüm" title="Yeni albüm"><Plus size={13} /></button>
       </div>
       {albums.map((a) => renaming?.id === a.id ? (
         <label key={a.id} className="field" style={{ margin: "1px 0" }}>
@@ -233,7 +238,7 @@ function Albums() {
         <button key={a.id} className={cls("nav", page === "library" && view === "album" && filter.album === String(a.id) && "on")}
           onClick={() => { setPage("library"); setView("album"); setFilter({ ...EMPTY_FILTER, album: String(a.id), label: a.name }); }}
           onContextMenu={(e) => { e.preventDefault(); setMenu({ el: e.currentTarget, id: a.id, name: a.name }); }}
-          title={a.kind === "smart" ? "Akıllı albüm: süzgece uyan yeni fotoğraflar kendiliğinden girer" : undefined}>
+          title={a.kind === "smart" ? `Akıllı albüm: ${rulesText(a.rules) || "tüm fotoğraflar"}` : undefined}>
           {a.kind === "smart" ? <SmartAlbum size={16} /> : <AlbumIcon size={16} />}
           <span className="ellipsis grow">{a.name}</span>
           {a.count ? <span className="cnt">{fmtInt(a.count)}</span> : null}
@@ -250,10 +255,20 @@ function Albums() {
       {menu && (
         <Popover anchor={menu.el} onClose={closeMenu} width={200} align="start">
           <button className="mitem" onClick={() => { closeMenu(); setRenaming({ id: menu.id, name: menu.name }); }}>Yeniden adlandır</button>
+          {albums.find((a) => a.id === menu.id)?.kind === "smart" && (
+            <button className="mitem" onClick={() => { closeMenu(); setSmartEdit(albums.find((a) => a.id === menu.id)!); }}>Kuralları düzenle…</button>
+          )}
           <div className="msep" />
           <button className="mitem danger" onClick={() => remove(menu.id, menu.name)}>Albümü sil</button>
         </Popover>
       )}
+      {addMenu && (
+        <Popover anchor={addMenu} onClose={closeAdd} width={210} align="start">
+          <button className="mitem" onClick={() => { closeAdd(); setCreating(""); }}>Yeni albüm</button>
+          <button className="mitem" onClick={() => { closeAdd(); setSmartEdit("new"); }}>Yeni akıllı albüm…</button>
+        </Popover>
+      )}
+      {smartEdit && repoId && <SmartAlbumDialog repoId={repoId} album={smartEdit === "new" ? undefined : smartEdit} onClose={closeSmart} />}
     </>
   );
 }

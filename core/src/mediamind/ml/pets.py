@@ -225,7 +225,9 @@ def recluster(repo: Repo) -> dict:
         by_animal: dict[str, list] = {}
         for r in rest:
             by_animal.setdefault(r["animal"], []).append(r)
-        for rows in by_animal.values():
+        from .people import absorb_ignored
+
+        for animal_name, rows in by_animal.items():
             V = _vecs(rows)
             S = V @ V.T
             parent = list(range(len(rows)))
@@ -242,7 +244,8 @@ def recluster(repo: Repo) -> dict:
             comp: dict[int, list[int]] = {}
             for i in range(len(rows)):
                 comp.setdefault(find(i), []).append(rows[i]["id"])
-            for ids in comp.values():
+            vecs = {r["id"]: r["vec"] for r in rows}
+            for ids in absorb_ignored(conn, list(comp.values()), vecs, animal=animal_name):
                 cid = min(ids)
                 conn.executemany("UPDATE faces SET cluster_id=? WHERE id=?", [(cid, i) for i in ids])
                 groups += 1

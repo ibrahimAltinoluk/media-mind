@@ -279,21 +279,35 @@ def set_dates(repo: Repo, asset_ids: list[int], shift_seconds: int | None = None
     return n
 
 
+def set_locations(repo: Repo, items: list[tuple[int, float, float]]) -> int:
+    """Her öğeye kendi konumu (asset_id, lat, lon). Yalnız MediaMind kaydında; geri alınabilir."""
+    for _, lat, lon in items:
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            raise ValueError("Geçersiz koordinat")
+    if not items:
+        return 0
+    gs = geo.lookup([(lat, lon) for _, lat, lon in items])
+    with repo.lock(), repo.db as conn:
+        pids: dict[tuple, int] = {}
+        for (aid, lat, lon), g in zip(items, gs):
+            key = (g["name"], g["admin1"], g["cc"])
+            if key not in pids:
+                conn.execute("INSERT INTO places(name, admin1, admin2, country_code) VALUES (?,?,?,?) "
+                             "ON CONFLICT(name, admin1, country_code) DO NOTHING", (g["name"], g["admin1"], g["admin2"], g["cc"]))
+                pids[key] = conn.execute("SELECT id FROM places WHERE name=? AND admin1 IS ? AND country_code IS ?", key).fetchone()["id"]
+            _ensure_edit_row(conn, aid)
+            conn.execute("UPDATE asset_edits SET lat=?, lon=?, edited_at=strftime('%Y-%m-%dT%H:%M:%S','now','localtime') "
+                         "WHERE asset_id=?", (lat, lon, aid))
+            conn.execute("UPDATE assets SET lat=?, lon=?, place_id=? WHERE id=?", (lat, lon, pids[key], aid))
+    geo.fix_place_names(repo.db)
+    return len(items)
+
+
 def set_location(repo: Repo, asset_ids: list[int], lat: float, lon: float) -> dict:
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         raise ValueError("Geçersiz koordinat")
     g = geo.lookup([(lat, lon)])[0]
-    with repo.lock(), repo.db as conn:
-        conn.execute("INSERT INTO places(name, admin1, admin2, country_code) VALUES (?,?,?,?) "
-                     "ON CONFLICT(name, admin1, country_code) DO NOTHING", (g["name"], g["admin1"], g["admin2"], g["cc"]))
-        pid = conn.execute("SELECT id FROM places WHERE name=? AND admin1 IS ? AND country_code IS ?",
-                           (g["name"], g["admin1"], g["cc"])).fetchone()["id"]
-        for aid in asset_ids:
-            _ensure_edit_row(conn, aid)
-            conn.execute("UPDATE asset_edits SET lat=?, lon=?, edited_at=strftime('%Y-%m-%dT%H:%M:%S','now','localtime') "
-                         "WHERE asset_id=?", (lat, lon, aid))
-            conn.execute("UPDATE assets SET lat=?, lon=?, place_id=? WHERE id=?", (lat, lon, pid, aid))
-    geo.fix_place_names(repo.db)
+    set_locations(repo, [(aid, lat, lon) for aid in asset_ids])
     return {"updated": len(asset_ids), "place": g["name"], "region": g["admin1"]}
 
 

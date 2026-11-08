@@ -129,6 +129,8 @@ def _cluster_free(repo: Repo) -> tuple[int, int]:
                 found.append([free[i]["id"] for i in idx])
     with repo.lock(), repo.db as conn:
         conn.execute("UPDATE faces SET cluster_id=NULL WHERE person_id IS NULL AND animal IS NULL")
+        # "Bir daha önerme" denen bir gruba benzeyen yeni gruplar önerilmez, o gizli gruba katılır
+        found = absorb_ignored(conn, found, {r["id"]: r["vec"] for r in free}, animal=None)
         clusters = 0
         for ids in found:
             cid = min(ids)
@@ -159,9 +161,13 @@ def exclude_face(repo: Repo, face_id: int, reason: str) -> None:
     if reason not in ("removed", "not_face", None):
         raise ValueError("Geçersiz neden")
     with repo.lock(), repo.db as conn:
-        conn.execute("UPDATE faces SET excluded=?, cluster_id=NULL, "
+        conn.execute("UPDATE faces SET excluded=?, cluster_id=NULL, ignore_group=NULL, "
                      "rejected_person_id=COALESCE(person_id, rejected_person_id), "
                      "person_id=CASE WHEN ? IS NULL THEN person_id ELSE NULL END WHERE id=?", (reason, reason, face_id))
+        animal = conn.execute("SELECT animal FROM faces WHERE id=?", (face_id,)).fetchone()
+    if reason is None:
+        # Geri alınan yüz yeniden gruplanıp önerilebilsin
+        request_recluster(repo, bool(animal and animal["animal"]))
 
 
 def dissolve_cluster(repo: Repo, cluster_id: int) -> int:
@@ -169,6 +175,87 @@ def dissolve_cluster(repo: Repo, cluster_id: int) -> int:
     with repo.lock(), repo.db as conn:
         return conn.execute("UPDATE faces SET excluded='removed', cluster_id=NULL WHERE cluster_id=? AND person_id IS NULL",
                             (cluster_id,)).rowcount
+
+
+IGNORE_MATCH = CLUSTER  # gizlenen grubun merkezine bu kadar benzeyen yeni grup da gizlenir
+
+
+def _ignored_centroids(conn, animal: str | None) -> dict[int, np.ndarray]:
+    q = ("SELECT ignore_group, vec FROM faces WHERE excluded='ignored' AND ignore_group IS NOT NULL AND "
+         + ("animal IS NULL" if animal is None else "animal=?"))
+    acc: dict[int, list] = {}
+    for r in conn.execute(q, () if animal is None else (animal,)):
+        acc.setdefault(r["ignore_group"], []).append(np.frombuffer(r["vec"], dtype=np.float32))
+    out = {}
+    for g, vs in acc.items():
+        if len({len(v) for v in vs}) != 1:
+            continue
+        c = np.mean(vs, axis=0)
+        out[g] = c / (np.linalg.norm(c) or 1.0)
+    return out
+
+
+def absorb_ignored(conn, groups: list[list[int]], vecs: dict[int, bytes], animal: str | None) -> list[list[int]]:
+    """Gizlenen gruplara benzeyen yeni grupları gizli gruba katar; kalan (önerilecek) grupları döndürür.
+    Yazma kilidi içinde çağrılır."""
+    ignored = _ignored_centroids(conn, animal)
+    if not ignored or not groups:
+        return groups
+    gids = list(ignored)
+    dims = {len(ignored[g]) for g in gids}
+    keep = []
+    for ids in groups:
+        V = np.stack([np.frombuffer(vecs[i], dtype=np.float32) for i in ids])
+        c = V.mean(axis=0)
+        c /= np.linalg.norm(c) or 1.0
+        best, bs = None, 0.0
+        if len(c) in dims:
+            for g in gids:
+                if len(ignored[g]) == len(c):
+                    s_ = float(ignored[g] @ c)
+                    if s_ > bs:
+                        best, bs = g, s_
+        if best is not None and bs >= IGNORE_MATCH:
+            conn.executemany("UPDATE faces SET excluded='ignored', ignore_group=?, cluster_id=NULL "
+                             "WHERE id=? AND person_id IS NULL AND excluded IS NULL", [(best, i) for i in ids])
+        else:
+            keep.append(ids)
+    return keep
+
+
+def ignore_cluster(repo: Repo, cluster_id: int) -> int:
+    """'Bir daha önerme': grup listeden kalkar, benzer yeni yüzler de önerilmez. Gizlenenlerden geri alınabilir."""
+    with repo.lock(), repo.db as conn:
+        return conn.execute("UPDATE faces SET excluded='ignored', ignore_group=?, cluster_id=NULL "
+                            "WHERE cluster_id=? AND person_id IS NULL", (cluster_id, cluster_id)).rowcount
+
+
+def ignored(repo: Repo, limit: int = 500) -> dict:
+    """Gizlenen gruplar ve "yüz değil" denen yüzler (geri almak için)."""
+    conn = repo.db
+    groups = []
+    for r in conn.execute(
+            "SELECT ignore_group, MAX(animal) AS animal, COUNT(*) AS faces, COUNT(DISTINCT asset_id) AS photos FROM faces "
+            "WHERE excluded='ignored' AND ignore_group IS NOT NULL AND person_id IS NULL "
+            "GROUP BY ignore_group ORDER BY photos DESC LIMIT ?", (limit,)).fetchall():
+        fs = conn.execute("SELECT id FROM faces WHERE ignore_group=? AND excluded='ignored' AND person_id IS NULL "
+                          "ORDER BY quality DESC LIMIT 6", (r["ignore_group"],)).fetchall()
+        groups.append({"group": r["ignore_group"], "animal": r["animal"], "faces": r["faces"], "photos": r["photos"],
+                       "sample_faces": [f["id"] for f in fs]})
+    not_faces = [{"face_id": r["id"], "asset_id": r["asset_id"]} for r in conn.execute(
+        "SELECT id, asset_id FROM faces WHERE excluded='not_face' AND person_id IS NULL ORDER BY id DESC LIMIT ?", (limit,))]
+    return {"groups": groups, "not_faces": not_faces}
+
+
+def restore_ignored(repo: Repo, group: int) -> int:
+    """Gizlenen grubu geri getir: yüzler yeniden gruplanır ve önerilir."""
+    with repo.lock(), repo.db as conn:
+        animal = conn.execute("SELECT animal FROM faces WHERE ignore_group=? AND animal IS NOT NULL LIMIT 1", (group,)).fetchone()
+        n = conn.execute("UPDATE faces SET excluded=NULL, ignore_group=NULL WHERE ignore_group=? AND excluded='ignored'",
+                         (group,)).rowcount
+    if n:
+        request_recluster(repo, animal is not None)
+    return n
 
 
 def persons(repo: Repo) -> list[dict]:

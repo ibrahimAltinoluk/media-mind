@@ -131,3 +131,64 @@ def test_knn_graph_clusters_large_sets():
     # her gerçek kişi tek gruba düşer
     for p in range(40):
         assert len(set(out[lab == p])) == 1
+
+
+def test_ignore_cluster_absorbs_similar_and_restores(archive):
+    """'Bir daha önerme': grup listeden kalkar, benzer yeni yüzler de önerilmez; geri getirince yeniden önerilir."""
+    repo = Repo.init(archive)
+    conn = repo.db
+    with conn:
+        for a in range(1, 10):
+            conn.execute("INSERT INTO assets(id, blake3, size, kind, width, height) VALUES (?,?,1,'photo',1024,1024)", (a, f"b{a}"))
+        face = lambda aid, vec: conn.execute(  # noqa: E731
+            "INSERT INTO faces(asset_id,x1,y1,x2,y2,score,quality,vec) VALUES (?,0,0,0.2,0.2,0.9,0.9,?)", (aid, vec)).lastrowid
+        for a in (1, 2, 3):
+            face(a, _vec(3, 0.02, a))                      # perde (yüz değil ama gruplanmış)
+        for a in (4, 5):
+            face(a, _vec(8, 0.02, a))                      # gerçek biri
+    people.recluster(repo)
+    cl = {c["cluster_id"]: c for c in people.clusters(repo)}
+    assert len(cl) == 2
+    blinds = next(cid for cid, c in cl.items() if c["members"][0]["asset_id"] in (1, 2, 3))
+
+    assert people.ignore_cluster(repo, blinds) == 3
+    assert [c["cluster_id"] for c in people.clusters(repo)] != [] and blinds not in {c["cluster_id"] for c in people.clusters(repo)}
+    ig = people.ignored(repo)
+    assert [g["group"] for g in ig["groups"]] == [blinds] and ig["groups"][0]["photos"] == 3
+
+    # Sonradan gelen benzer yüzler gizli gruba katılır, önerilmez
+    with conn:
+        for a in (6, 7):
+            conn.execute("INSERT INTO faces(asset_id,x1,y1,x2,y2,score,quality,vec) VALUES (?,0,0,0.2,0.2,0.9,0.9,?)", (a, _vec(3, 0.02, a)))
+    people.recluster(repo)
+    assert len(people.clusters(repo)) == 1
+    assert people.ignored(repo)["groups"][0]["faces"] == 5
+
+    assert people.restore_ignored(repo, blinds) == 5     # sunucu dışında yeniden gruplama hemen çalışır
+    assert people.ignored(repo)["groups"] == []
+    assert len(people.clusters(repo)) == 2
+
+
+def test_person_timeline_and_birth(archive):
+    from fastapi.testclient import TestClient
+
+    from mediamind.api.server import create_app
+
+    repo = Repo.init(archive)
+    with repo.db as conn:
+        pid = conn.execute("INSERT INTO persons(name) VALUES ('Can')").lastrowid
+        for a, (t, src) in enumerate([("2021-03-01T10:00:00", "exif"), ("2020-06-01T10:00:00", "exif"), ("2022-01-01T00:00:00", "mtime")], 1):
+            conn.execute("INSERT INTO assets(id, blake3, size, kind, taken_at, taken_at_source) VALUES (?,?,1,'photo',?,?)", (a, f"b{a}", t, src))
+            conn.execute("INSERT INTO files(asset_id, rel_path, fs_path, size, mtime_ns, state, tracked) VALUES (?,?,?,1,0,'present',1)",
+                         (a, f"p{a}.jpg", f"p{a}.jpg"))
+            for q in (0.5, 0.9):  # fotoğraf başına en net yüz
+                conn.execute("INSERT INTO faces(asset_id,x1,y1,x2,y2,score,quality,vec,person_id) VALUES (?,0,0,1,1,0.9,?,?,?)",
+                             (a, q, _vec(0), pid))
+    c = TestClient(create_app("t"), headers={"x-mm-token": "t"})
+    rid = c.post("/repos", json={"path": str(archive)}).json()["id"]
+    tl = c.get(f"/repos/{rid}/people/{pid}/timeline").json()
+    assert [f["asset_id"] for f in tl["faces"]] == [2, 1] and all(f["quality"] == 0.9 for f in tl["faces"])
+    assert tl["person"]["birth_date"] is None
+    assert c.put(f"/repos/{rid}/people/{pid}/birth", json={"birth_date": "2019-12-24"}).json()["birth_date"] == "2019-12-24"
+    assert c.get(f"/repos/{rid}/people/{pid}/timeline").json()["person"]["birth_date"] == "2019-12-24"
+    assert c.put(f"/repos/{rid}/people/{pid}/birth", json={"birth_date": "yanlış"}).status_code == 400

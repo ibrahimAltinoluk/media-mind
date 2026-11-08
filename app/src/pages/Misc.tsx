@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { api, thumbUrl, waitJob, type MapPoint } from "../api";
+import { GeoSuggestBanner, GeoSuggestSheet } from "../components/GeoSuggest";
 import { MapView } from "../components/MapView";
 import { Arrow, Clock, Close, Pin } from "../components/Icons";
 import { Toolbar } from "../components/Toolbar";
@@ -105,6 +106,8 @@ export function Places() {
   const [mode, setModeRaw] = useState<"map" | "list">(() => { try { return (localStorage.getItem("mm.places") as "map" | "list") || "map"; } catch { return "map"; } });
   const setMode = (m: "map" | "list") => { setModeRaw(m); try { localStorage.setItem("mm.places", m); } catch { /* yok */ } };
   const [chosen, setChosen] = useState<MapPoint[] | null>(null);
+  const [geoOpen, setGeoOpen] = useState(false);
+  const closeGeo = useCallback(() => setGeoOpen(false), []);
   const n = q.data?.places.length ?? 0;
   const items = useMemo(() => (chosen ?? []).map(pointItem), [chosen]);
   const names = useMemo(() => {
@@ -120,7 +123,10 @@ export function Places() {
           <button className={cls(mode === "map" && "on")} onClick={() => setMode("map")}>Harita</button>
           <button className={cls(mode === "list" && "on")} onClick={() => setMode("list")}>Liste</button>
         </div>
+        <button className="btn sm" onClick={() => setGeoOpen(true)} title="Konumsuz fotoğraflara yakın zamanlı fotoğraflardan ya da GPX kaydından konum öner">Konum öner…</button>
       </Toolbar>
+      <GeoSuggestBanner repoId={repoId} onOpen={() => setGeoOpen(true)} />
+      {geoOpen && <GeoSuggestSheet repoId={repoId} onClose={closeGeo} />}
       {q.data && pts.data && n === 0 && !pts.data.points.length ? (
         <div className="scroll"><div className="empty"><Pin size={40} /><h2>Konumu olan fotoğraf yok</h2><span>Konum bilgisi olan fotoğraf ve videolar burada haritada ve şehirlere göre görünür. Konumsuz fotoğraflara sağ tıklayıp “Konum ata…” diyebilirsin.</span></div></div>
       ) : mode === "map" ? (

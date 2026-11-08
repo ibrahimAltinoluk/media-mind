@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Album, CleanupCategory, Memory, FolderList, VideoInfo, AppSettings, AssetDetail, AssetItem, ChatResult, DupsResponse, FaceCluster, Facets, Job, ModelStatus, OrganizePreview, Person, Plan, Probe, RepoEntry, SmartState, Summary, TrashInfo } from "./types";
+import type { Album, CleanupCategory, Memory, FolderList, VideoInfo, AppSettings, AssetDetail, AssetItem, ChatResult, DupsResponse, FaceCluster, Facets, GeoSuggestions, IgnoredGroup, Job, ModelStatus, OrganizePreview, Person, Plan, Probe, RepoEntry, SmartState, Summary, TrashInfo } from "./types";
 
 /** [enlem, boylam, blake3, dosya no, tarih, yer, tür, öğe no, yol] */
 export type MapPoint = [number, number, string, number, string | null, string | null, "photo" | "video", number, string];
@@ -66,7 +66,8 @@ const BUSY_LABELS: [RegExp, string | null][] = [
   [/\/assistant$/, null],
   [/\/jobs\/\d+\/cancel$/, null],
   [/\/people\/clusters\/\d+\/name$/, "Kişi adlandırılıyor"],
-  [/\/people\/clusters\/\d+\/(reject|dissolve)/, "Grup güncelleniyor"],
+  [/\/people\/clusters\/\d+\/(reject|dissolve|ignore)/, "Grup güncelleniyor"],
+  [/\/people\/ignored\/\d+\/restore$/, "Grup geri getiriliyor"],
   [/\/people\/\d+\/merge$/, "Kişiler birleştiriliyor"],
   [/\/people\/\d+\/cover$/, "Kapak fotoğrafı değiştiriliyor"],
   [/^DELETE .*\/people\/\d+$/, "Kişi kaldırılıyor"],
@@ -81,6 +82,8 @@ const BUSY_LABELS: [RegExp, string | null][] = [
   [/^PATCH .*\/assets\/\d+$/, "Kaydediliyor"],
   [/\/(favorite|rating|tags)/, "Kaydediliyor"],
   [/\/edits|\/dates|\/location/, "Değişiklik kaydediliyor"],
+  [/\/geo\/suggest$/, null],
+  [/\/geo\/apply$/, "Konumlar kaydediliyor"],
   [/\/import$/, "İçe aktarma başlatılıyor"],
   [/\/export$/, "Dışa aktarma başlatılıyor"],
   [/\/share\/prepare$/, "Paylaşım hazırlanıyor"],
@@ -176,7 +179,7 @@ export const backendUrl = () => backend.url;
 export const playUrl = (repo: string, blake: string) => `${backend.url}/repos/${repo}/play/${blake}?t=${backend.token}`;
 export const stripUrl = (repo: string, blake: string, n: number) => `${backend.url}/repos/${repo}/strip/${blake}?n=${n}&t=${backend.token}`;
 export const frameUrl = (repo: string, blake: string, ms: number) => `${backend.url}/repos/${repo}/frame/${blake}/${ms}?t=${backend.token}`;
-export const faceUrl = (repo: string, faceId: number) => `${backend.url}/repos/${repo}/faces/${faceId}/crop?t=${backend.token}`;
+export const faceUrl = (repo: string, faceId: number, size?: 400) => `${backend.url}/repos/${repo}/faces/${faceId}/crop?t=${backend.token}${size ? `&size=${size}` : ""}`;
 
 export const api = {
   repos: () => request<RepoEntry[]>("GET", "/repos"),
@@ -267,11 +270,20 @@ export const api = {
   excludeFace: (id: string, fid: number, reason: "removed" | "not_face" | null) => request("POST", `/repos/${id}/faces/${fid}/exclude`, { body: { reason } }),
   rejectSuggestion: (id: string, cid: number, person_id: number) => request<{ faces: number }>("POST", `/repos/${id}/people/clusters/${cid}/reject`, { body: { person_id } }),
   dissolveCluster: (id: string, cid: number) => request<{ faces: number }>("POST", `/repos/${id}/people/clusters/${cid}/dissolve`),
+  ignoreCluster: (id: string, cid: number) => request<{ faces: number }>("POST", `/repos/${id}/people/clusters/${cid}/ignore`),
+  ignoredPeople: (id: string) => request<{ groups: IgnoredGroup[]; not_faces: { face_id: number; asset_id: number }[] }>("GET", `/repos/${id}/people/ignored`),
+  restoreIgnored: (id: string, group: number) => request<{ faces: number }>("POST", `/repos/${id}/people/ignored/${group}/restore`),
   renamePerson: (id: string, pid: number, name: string) => request("PATCH", `/repos/${id}/people/${pid}`, { body: { name } }),
   mergeSuggestions: (id: string) => request<{ suggestions: { into: MiniPerson; other: MiniPerson; similarity: number }[] }>("GET", `/repos/${id}/people/merge-suggestions`),
   dismissMerge: (id: string, a: number, b: number) => request("POST", `/repos/${id}/people/merge-suggestions/dismiss`, { body: { a, b } }),
   mergePerson: (id: string, pid: number, into: number) => request("POST", `/repos/${id}/people/${pid}/merge`, { body: { into } }),
   personFaces: (id: string, pid: number, limit = 400) => request<{ id: number; asset_id: number; quality: number; frame_ms: number | null; taken_at: string | null }[]>("GET", `/repos/${id}/people/${pid}/faces`, { query: { limit } }),
+  personTimeline: (id: string, pid: number) => request<{ person: { id: number; name: string; kind: string; birth_date: string | null }; faces: { id: number; asset_id: number; quality: number; taken_at: string }[] }>("GET", `/repos/${id}/people/${pid}/timeline`),
+  setPersonBirth: (id: string, pid: number, birth_date: string | null) => request<{ birth_date: string | null }>("PUT", `/repos/${id}/people/${pid}/birth`, { body: { birth_date } }),
+  geoSuggest: (id: string, gpx?: string) => request<GeoSuggestions>("POST", `/repos/${id}/geo/suggest`, { body: { gpx: gpx ?? null }, timeout: 90_000 }),
+  geoApply: (id: string, items: { asset_id: number; lat: number; lon: number }[]) => request<{ updated: number; job: Job | null }>("POST", `/repos/${id}/geo/apply`, { body: { items } }),
+  geoSkip: (id: string, asset_ids: number[]) => request<{ skipped: number }>("POST", `/repos/${id}/geo/skip`, { body: { asset_ids } }),
+  geoClearSkips: (id: string) => request<{ cleared: number }>("DELETE", `/repos/${id}/geo/skip`),
   setPersonCover: (id: string, pid: number, face_id: number | null) => request("PUT", `/repos/${id}/people/${pid}/cover`, { body: { face_id } }),
   deletePerson: (id: string, pid: number) => request("DELETE", `/repos/${id}/people/${pid}`),
   trash: (id: string) => request<TrashInfo>("GET", `/repos/${id}/trash`),

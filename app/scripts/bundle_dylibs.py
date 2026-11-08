@@ -44,8 +44,11 @@ def resolve(ref: str, owner: Path) -> Path | None:
             cand = Path(base) / ref.split("/", 1)[1]
             if cand.exists():
                 return cand.resolve()
-        cand = Path("/opt/homebrew/lib") / ref.split("/", 1)[1]
-        return cand.resolve() if cand.exists() else None
+        for prefix in ("/opt/homebrew/lib", "/usr/local/lib"):
+            cand = Path(prefix) / ref.split("/", 1)[1]
+            if cand.exists():
+                return cand.resolve()
+        return None
     p = Path(ref)
     return p.resolve() if p.exists() else None
 
