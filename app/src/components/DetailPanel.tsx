@@ -6,7 +6,7 @@ import { EMPTY_FILTER } from "../state";
 import { useApp } from "../state";
 import type { AssetDetail, AssetItem } from "../types";
 import { basename, cls, fmtBytes, fmtDate, fmtDuration, placeText, SOURCE_LABEL } from "../util";
-import { Close, Copy, Heart, Star } from "./Icons";
+import { Check, Close, Copy, Heart, Star } from "./Icons";
 import { revealInFinder } from "./Sidebar";
 
 export function useTrashFlow() {
@@ -108,31 +108,29 @@ export function Similar({ repoId, assetId, name }: { repoId: string; assetId: nu
   );
 }
 
-/** Fotoğraftaki yazı (OCR): seçilebilir metin ve tek tıkla kopyalama. */
+/** Fotoğraftaki yazı (OCR): salt okunur, seçilebilir metin kutusu; köşedeki simgeyle tamamı kopyalanır. */
 export function PhotoText({ text, dark }: { text: string | null | undefined; dark?: boolean }) {
   const { toast } = useApp();
-  const [all, setAll] = useState(false);
+  const [copied, setCopied] = useState(false);
   if (!text) return null;
-  const lines = text.split("\n");
-  const shown = all ? lines : lines.slice(0, 6);
-  const copy = async (t: string) => {
+  const copy = async () => {
     try {
-      await navigator.clipboard.writeText(t);
-      toast("Metin kopyalandı");
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
     } catch {
       toast("Kopyalanamadı", { error: true });
     }
   };
   return (
     <div className="col" style={{ gap: 6 }}>
-      <div className="row"><span className="lbl grow">Fotoğraftaki yazı</span>
-        <button className="btn sm ghost" onClick={() => copy(text)}>Tümünü kopyala</button></div>
-      <div className={cls("photo-text selectable", dark && "dark")}>
-        {shown.map((l, i) => (
-          <button key={i} className="pt-line" onClick={() => copy(l)} title="Bu satırı kopyala">{l}</button>
-        ))}
+      <span className="lbl">Fotoğraftaki yazı</span>
+      <div className={cls("photo-text", dark && "dark")}>
+        <div className="pt-body selectable" tabIndex={0} aria-label="Fotoğraftaki yazı" aria-readonly="true">{text}</div>
+        <button className="pt-copy" onClick={copy} title={copied ? "Kopyalandı" : "Tümünü kopyala"} aria-label="Tümünü kopyala">
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+        </button>
       </div>
-      {lines.length > 6 && <button className="btn sm ghost" style={{ alignSelf: "flex-start" }} onClick={() => setAll((x) => !x)}>{all ? "Daha az" : `${lines.length - 6} satır daha`}</button>}
     </div>
   );
 }

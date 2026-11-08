@@ -163,11 +163,15 @@ export function SearchField({ q, setQ, filter, setFilter, view, setView, facets,
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
   const ents = useMemo(() => buildEntities(facets, albums), [facets, albums]);
+  // Zaten etkin olan süzgeçler akıllı satırda yeniden önerilmesin
   const index = useMemo(() => {
     const m = new Map<string, Entity[]>();
-    for (const e of ents) for (const k of e.keys) m.set(k, [...(m.get(k) ?? []), e]);
+    for (const e of ents) {
+      if (e.has?.(filter)) continue;
+      for (const k of e.keys) m.set(k, [...(m.get(k) ?? []), e]);
+    }
     return m;
-  }, [ents]);
+  }, [ents, filter]);
 
   const text = q.trim();
   const parsed = useMemo(() => (text ? parse(index, text) : { ents: [], rest: "" }), [index, text]);

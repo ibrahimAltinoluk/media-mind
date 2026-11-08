@@ -121,7 +121,7 @@ export function Places() {
           <button className={cls(mode === "list" && "on")} onClick={() => setMode("list")}>Liste</button>
         </div>
       </Toolbar>
-      {q.data && n === 0 ? (
+      {q.data && pts.data && n === 0 && !pts.data.points.length ? (
         <div className="scroll"><div className="empty"><Pin size={40} /><h2>Konumu olan fotoğraf yok</h2><span>Konum bilgisi olan fotoğraf ve videolar burada haritada ve şehirlere göre görünür. Konumsuz fotoğraflara sağ tıklayıp “Konum ata…” diyebilirsin.</span></div></div>
       ) : mode === "map" ? (
         <div className="content">

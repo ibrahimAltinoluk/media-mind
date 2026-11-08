@@ -236,7 +236,7 @@ select.sel { height: 24px; border-radius: 6px; border: 0; background: var(--fill
 .stars button.on { color: #ff9f0a; }
 
 /* ---------------------------------------------------------------- görüntüleyici (her temada koyu) */
-.viewer { position: fixed; inset: 0; z-index: 50; background: #000; color: #f5f5f7; display: flex; flex-direction: column;
+.viewer { position: fixed; inset: 0; z-index: 66; background: #000; color: #f5f5f7; display: flex; flex-direction: column;
   --muted: #98989d; --line: rgba(255,255,255,0.1); --hover: rgba(255,255,255,0.1); --sel: rgba(255,255,255,0.14); --accent: #0a84ff; --accent-soft: rgba(10,132,255,0.25);
   --text: #f5f5f7; --text-2: #d1d1d6; --panel: #2c2c2e; --panel-2: #1c1c1e; --fill: rgba(255,255,255,0.1); --fill-2: rgba(255,255,255,0.16);
   --line-strong: rgba(255,255,255,0.2); --tile-bg: #1c1c1e; --shadow: 0 10px 40px rgba(0,0,0,0.6), 0 0 0 0.5px rgba(255,255,255,0.14);
@@ -506,8 +506,8 @@ button.activity:hover, button.activity.open { background: var(--hover); }
 /* Harita */
 .map { background: var(--tile-bg); }
 .map-pin { background: none; border: 0; }
-.map-thumb { position: relative; width: 52px; height: 52px; border-radius: 10px; border: 2.5px solid #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35); overflow: visible; background: #ccc; }
-.map-thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 7px; display: block; }
+.map-thumb { position: relative; box-sizing: border-box; width: 52px; height: 52px; border-radius: 10px; border: 2.5px solid #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35); overflow: visible; background: #ccc; }
+.map-thumb img { width: 100% !important; height: 100% !important; object-fit: cover; border-radius: 7.5px; display: block; }
 .map-thumb span { position: absolute; right: -8px; top: -8px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: #007aff; color: #fff; font: 600 11px/20px var(--font); text-align: center; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
 .map-note { position: absolute; left: 10px; bottom: 6px; z-index: 500; font-size: 10.5px; color: var(--muted); background: var(--panel); padding: 2px 8px; border-radius: 6px; opacity: 0.9; pointer-events: none; }
 .leaflet-container { font: inherit; }
@@ -528,11 +528,14 @@ button.activity:hover, button.activity.open { background: var(--hover); }
 .scrubber:hover .scrub-year { color: var(--text-2); }
 .scrub-pos { position: absolute; right: 0; width: 14px; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; }
 .scrub-tip { position: absolute; right: 38px; transform: translateY(-50%); padding: 3px 8px; border-radius: 6px; background: var(--panel); box-shadow: var(--shadow); font-size: 12px; font-weight: 600; white-space: nowrap; pointer-events: none; z-index: 5; }
-.photo-text { display: flex; flex-direction: column; gap: 1px; padding: 6px; border-radius: 8px; background: var(--fill); max-height: 220px; overflow-y: auto; }
+.photo-text { position: relative; border-radius: 8px; background: var(--fill); }
 .photo-text.dark { background: rgba(255, 255, 255, 0.06); }
-.pt-line { border: 0; background: none; text-align: left; padding: 2px 6px; border-radius: 4px; font: inherit; font-size: 12.5px; color: inherit; overflow-wrap: anywhere; cursor: copy; }
-.pt-line:hover { background: var(--accent-soft); }
-.photo-text.dark .pt-line:hover { background: rgba(10, 132, 255, 0.25); }
+.pt-body { padding: 8px 34px 8px 10px; max-height: 220px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.5; cursor: text; outline: none; border-radius: 8px; }
+.pt-body:focus-visible { box-shadow: 0 0 0 2px var(--accent-soft); }
+.pt-copy { position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; padding: 0; background: transparent; color: var(--muted); cursor: default; }
+.pt-copy:hover { background: var(--fill-2); color: var(--text); }
+.photo-text.dark .pt-copy { color: rgba(255, 255, 255, 0.6); }
+.photo-text.dark .pt-copy:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
 
 /* İlk açılış tanıtımı */
 .dialog.onboard { max-width: 480px; padding: 28px 28px 0; align-items: center; text-align: center; }
@@ -578,12 +581,12 @@ button.activity:hover, button.activity.open { background: var(--hover); }
 .srow kbd { font: 11px var(--font); color: inherit; opacity: 0.6; }
 .smartrow { min-height: 36px; }
 .smartrow .stokens-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.srow.hi .stoken { background: rgba(255, 255, 255, 0.22); color: #fff; }
+.ssugg .srow.hi .stoken.stoken { background: rgba(255, 255, 255, 0.22); color: #fff; }
 .sgroup { padding: 8px 9px 3px; font-size: 11px; font-weight: 600; color: var(--muted); }
 .shint { padding: 8px 9px 4px; margin-top: 4px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
 
 /* Süren işlem göstergesi */
-.busy-pill { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 65; display: flex; align-items: center; gap: 10px;
+.busy-pill { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 67; display: flex; align-items: center; gap: 10px;
   max-width: min(560px, calc(100vw - 32px)); padding: 9px 16px; border-radius: 20px; background: var(--panel); box-shadow: var(--shadow);
   font-size: 13px; animation: busy-in 0.18s ease-out; pointer-events: none; }
 .busy-pill b { font-weight: 600; }
