@@ -72,3 +72,25 @@ def test_switch_keeps_old_model_until_done(archive, monkeypatch):
     assert mat.shape == (3, 1152)
     assert content.finish_switch(repo) == 3  # eski vektörler silindi
     assert repo.db.execute("SELECT COUNT(*) FROM asset_vectors WHERE model=?", (STD,)).fetchone()[0] == 0
+
+
+def test_intel_and_arm_vectors_coexist(archive):
+    """Aynı kütüphane Apple Silicon (int8) ve eski Intel (uint8) Mac'te açılınca birbirinin vektörleri silinmez,
+    bu Mac'te çalışmayan sürümün vektörleri aramada kullanılmaz."""
+    for i in range(2):
+        make_image(archive / f"t{i}.jpg", i + 1)
+    repo = Repo.init(archive)
+    scan.scan(repo)
+    analyze.track(repo)
+    analyze.analyze(repo, smart=False)
+    ids = [r[0] for r in repo.db.execute("SELECT id FROM assets ORDER BY id")]
+    other = siglip.UINT8_VERSION if siglip.MODEL_VERSION == siglip.INT8_VERSION else siglip.INT8_VERSION
+    rng = np.random.default_rng(0)
+    with repo.db as conn:
+        for a in ids:
+            for m in (siglip.MODEL_VERSION, other):
+                conn.execute("INSERT INTO asset_vectors(asset_id, model, vec) VALUES (?,?,?)", (a, m, _vec(rng, 768).tobytes()))
+    assert not siglip.available(other)
+    assert content.effective_version(repo) == siglip.MODEL_VERSION
+    assert content.finish_switch(repo) == 0
+    assert repo.db.execute("SELECT COUNT(*) FROM asset_vectors WHERE model=?", (other,)).fetchone()[0] == 2

@@ -156,9 +156,12 @@ def finish_switch(repo: Repo) -> int:
         "(SELECT 1 FROM asset_vectors t WHERE t.asset_id=o.asset_id AND t.model=?)", (target, target)).fetchone()[0]
     if lacking:
         return 0
+    # Aynı modelin öbür Mac türündeki (int8/uint8) vektörleri korunur; yalnız gerçekten eskiyen model silinir
+    keep = (target, *siglip.PLATFORM_VERSIONS) if target in siglip.PLATFORM_VERSIONS else (target,)
+    marks = ",".join("?" * len(keep))
     with repo.lock(), conn:
-        n = conn.execute("DELETE FROM asset_vectors WHERE model<>?", (target,)).rowcount
-        conn.execute("DELETE FROM video_frames WHERE model<>?", (target,))
+        n = conn.execute(f"DELETE FROM asset_vectors WHERE model NOT IN ({marks})", keep).rowcount
+        conn.execute(f"DELETE FROM video_frames WHERE model NOT IN ({marks})", keep)
     _vec_cache.pop(str(repo.root), None)
     return n
 

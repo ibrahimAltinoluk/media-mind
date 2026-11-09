@@ -4,7 +4,6 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{Manager, RunEvent};
@@ -18,6 +17,7 @@ struct BackendInfo {
 struct Backend {
     info: BackendInfo,
     child: Mutex<Option<Child>>,
+    spawn_error: Option<String>,
 }
 
 /// Çekirdek CLI'nin yolu: MEDIAMIND_CORE ortam değişkeni; yoksa uygulamanın içine gömülü çekirdek
@@ -42,15 +42,10 @@ fn free_port() -> u16 {
         .unwrap_or(7341)
 }
 
-fn wait_ready(port: u16, timeout: Duration) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < timeout {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    false
+/// Çekirdeğin çıktısı buraya yazılır; açılmazsa hata ekranında son satırları gösterilir.
+fn log_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    PathBuf::from(home).join("Library/Logs/MediaMind/core.log")
 }
 
 fn start_backend(resources: Option<PathBuf>) -> Backend {
@@ -62,26 +57,62 @@ fn start_backend(resources: Option<PathBuf>) -> Backend {
         "/opt/homebrew/bin:/usr/local/bin:{}",
         std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".into())
     );
+    let log = log_path();
+    if let Some(dir) = log.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let (out, err) = match std::fs::File::create(&log).and_then(|f| Ok((f.try_clone()?, f))) {
+        Ok((a, b)) => (Stdio::from(a), Stdio::from(b)),
+        Err(_) => (Stdio::inherit(), Stdio::inherit()),
+    };
     let child = Command::new(&bin)
         .args(["serve", "--port", &port.to_string()])
         .env("MEDIAMIND_TOKEN", &token)
         .env("PATH", path)
         .stdin(Stdio::null())
+        .stdout(out)
+        .stderr(err)
         .spawn();
-    let child = match child {
-        Ok(c) => Some(c),
-        Err(e) => {
-            eprintln!("MediaMind çekirdeği başlatılamadı ({}): {e}", bin.display());
-            None
-        }
+    // Hazır olmasını burada beklemeyiz (pencere hemen açılsın); arayüz /health'i yoklar,
+    // çekirdek kapanırsa backend_status ile nedenini öğrenir. Eski/yavaş Mac'te ilk açılış uzun sürebilir.
+    let (child, spawn_error) = match child {
+        Ok(c) => (Some(c), None),
+        Err(e) => (None, Some(format!("Çekirdek başlatılamadı ({}): {e}", bin.display()))),
     };
-    if child.is_some() && !wait_ready(port, Duration::from_secs(20)) {
-        eprintln!("MediaMind çekirdeği 20 sn içinde hazır olmadı");
-    }
     Backend {
         info: BackendInfo { url: format!("http://127.0.0.1:{port}"), token },
         child: Mutex::new(child),
+        spawn_error,
     }
+}
+
+#[derive(Clone, Serialize)]
+struct BackendStatus {
+    running: bool,
+    error: Option<String>,
+    log_path: String,
+    log_tail: String,
+}
+
+/// Çekirdek hâlâ çalışıyor mu; kapandıysa çıkış kodu ve günlüğün son satırları.
+#[tauri::command]
+fn backend_status(state: tauri::State<Backend>) -> BackendStatus {
+    let log = log_path();
+    let tail = || {
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        let lines: Vec<&str> = text.lines().collect();
+        lines[lines.len().saturating_sub(25)..].join("\n")
+    };
+    let mut guard = state.child.lock().unwrap();
+    let (running, error) = match guard.as_mut() {
+        None => (false, state.spawn_error.clone().or_else(|| Some("Çekirdek çalışmıyor".into()))),
+        Some(c) => match c.try_wait() {
+            Ok(None) => (true, None),
+            Ok(Some(code)) => (false, Some(format!("Çekirdek kapandı ({code})"))),
+            Err(e) => (false, Some(e.to_string())),
+        },
+    };
+    BackendStatus { running, error, log_path: log.display().to_string(), log_tail: if running { String::new() } else { tail() } }
 }
 
 #[tauri::command]
@@ -136,7 +167,7 @@ pub fn run() {
             app.manage(start_backend(app.path().resource_dir().ok()));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![backend_info, share_files])
+        .invoke_handler(tauri::generate_handler![backend_info, backend_status, share_files])
         .build(tauri::generate_context!())
         .expect("MediaMind başlatılamadı");
 

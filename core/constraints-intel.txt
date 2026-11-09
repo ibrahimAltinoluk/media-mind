@@ -1,0 +1,8 @@
+# Intel (x86_64) paketi macOS 10.15 Catalina'da da açılabilsin diye: bu paketlerin daha yeni sürümleri
+# yalnız macOS 11+ (protobuf 6+: 11, onnxruntime 1.20+: 13) için derlenmiş. app/scripts/bundle-core.sh kullanır;
+# derleme sonunda paketteki her ikili denetlenir, daha yeni macOS isteyen çıkarsa paketleme durur.
+onnxruntime>=1.19.2,<1.20   # macOS 11'den eskiye hiç sürümü yok; Catalina'da akıllı analiz çalışmayabilir
+protobuf<6
+av<14
+ctranslate2<=4.6.0
+httptools<0.9

@@ -9,7 +9,13 @@ from PIL import Image
 
 from . import models
 
-MODEL_VERSION = "siglip2-base-224-int8"  # standart kademe (geriye uyumluluk için sabitler korunur)
+# standart kademe (geriye uyumluluk için sabitler korunur). Eski onnxruntime'lı Intel pakette görsel kodlayıcı
+# uint8 sürümüdür; vektörleri int8'inkiyle karıştırılamaz, bu yüzden ayrı sürüm adı taşır.
+INT8_VERSION = "siglip2-base-224-int8"
+UINT8_VERSION = "siglip2-base-224-uint8"
+MODEL_VERSION = INT8_VERSION if models.SIGLIP_VISION.endswith("_int8.onnx") else UINT8_VERSION
+# Aynı kütüphane hem Apple Silicon hem eski Intel Mac'te açılabilir: birbirinin vektörleri silinmez
+PLATFORM_VERSIONS = (INT8_VERSION, UINT8_VERSION)
 DIM = 768
 _MAX_LEN = 64
 _lock = threading.Lock()
@@ -58,7 +64,7 @@ class SigLIP:
         spec = prof["spec"]
         if not models.installed(spec):
             raise RuntimeError(f"{spec.label} kurulu değil")
-        self.vision = _session(models.path(spec, "onnx/vision_model_int8.onnx"))
+        self.vision = _session(models.path(spec, models.SIGLIP_VISION))
         self.text = _session(models.path(spec, "onnx/text_model_int8.onnx"))
         self.tok = Tokenizer.from_file(str(models.path(spec, "tokenizer.json")))
         pad_id = self.tok.token_to_id("<pad>")
@@ -116,4 +122,7 @@ def unload(version: str) -> None:
 
 
 def available(version: str | None = None) -> bool:
+    # Bu Mac'te çalıştırılamayan sürüm (ör. Intel'de int8) kullanılamaz sayılır; vektörleri aramada kullanılmaz
+    if version is not None and version not in BY_VERSION:
+        return False
     return models.installed(profile(version)["spec"])

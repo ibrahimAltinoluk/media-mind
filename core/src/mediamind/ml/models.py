@@ -30,6 +30,22 @@ class ModelSpec:
         return sum(self.files.values())
 
 
+def int8_conv_supported() -> bool:
+    """Intel paketindeki eski onnxruntime (1.19; macOS 10.15/11 için son sürüm) int8 ağırlıklı ConvInteger'ı
+    çalıştıramıyor; o durumda görsel kodlayıcının uint8 nicelenmiş sürümü kullanılır (vektörleri ayrı sürüm sayılır)."""
+    import platform
+    from importlib.metadata import PackageNotFoundError, version
+
+    if platform.machine() != "x86_64":
+        return True
+    try:
+        return tuple(int(x) for x in version("onnxruntime").split(".")[:2]) >= (1, 20)
+    except (PackageNotFoundError, ValueError):
+        return True
+
+
+SIGLIP_VISION = "onnx/vision_model_int8.onnx" if int8_conv_supported() else "onnx/vision_model_uint8.onnx"
+
 SIGLIP = ModelSpec(
     name="siglip2-base",
     label="SigLIP2 (çok dilli görsel-metin)",
@@ -41,7 +57,7 @@ SIGLIP = ModelSpec(
         "special_tokens_map.json": 636,
         "tokenizer_config.json": 47240,
         "tokenizer.json": 34363039,
-        "onnx/vision_model_int8.onnx": 94553333,
+        SIGLIP_VISION: 94553333,  # int8 ve uint8 sürümleri aynı boyutta
         "onnx/text_model_int8.onnx": 283438275,
     },
     license="Apache-2.0",

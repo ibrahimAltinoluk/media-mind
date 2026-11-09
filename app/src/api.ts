@@ -35,18 +35,34 @@ export class ApiError extends Error {
   }
 }
 
-export async function initBackend(): Promise<void> {
+/** Çekirdek açılamadığında hata ekranında gösterilecek ayrıntı (günlüğün son satırları). */
+export class BackendError extends Error {
+  constructor(message: string, public detail = "", public logPath = "") { super(message); }
+}
+
+type BackendStatus = { running: boolean; error: string | null; log_path: string; log_tail: string };
+
+export async function initBackend(onSlow?: () => void): Promise<void> {
   if (isTauri) backend = await invoke<{ url: string; token: string }>("backend_info");
-  for (let i = 0; i < 100; i++) {
+  // Eski/yavaş Mac'te ilk açılış (macOS'un dosyaları ilk kez denetlemesi dahil) bir dakikayı geçebilir:
+  // çekirdek çalıştığı sürece beklenir, kapanırsa nedeni gösterilir.
+  const start = Date.now();
+  for (let i = 0; ; i++) {
     try {
       const r = await fetch(`${backend.url}/health`);
       if (r.ok) return;
     } catch {
       /* henüz hazır değil */
     }
+    if (isTauri && i % 5 === 4) {
+      const st = await invoke<BackendStatus>("backend_status");
+      if (!st.running) throw new BackendError(st.error ?? "Çekirdek kapandı", st.log_tail, st.log_path);
+    }
+    const waited = Date.now() - start;
+    if (waited > 15_000) onSlow?.();
+    if (waited > 300_000) throw new BackendError(`MediaMind çekirdeği 5 dakikada açılmadı (${backend.url})`);
     await new Promise((res) => setTimeout(res, 200));
   }
-  throw new Error(`MediaMind çekirdeğine bağlanılamadı (${backend.url})`);
 }
 
 type Query = Record<string, string | number | boolean | undefined | null>;

@@ -114,8 +114,21 @@ PY="$R/python/bin/python3"
 # 2) Bağımlılıklar (uv.lock / pyproject.toml gereksinimleri)
 echo "→ 2/6 Python paketleri kuruluyor ($TARGET_ARCH)..."
 REQ="$(mktemp)"
-(cd "$CORE" && uv export --no-dev --no-hashes --format requirements-txt --no-emit-project > "$REQ")
-uv pip install --python "$PY" --target "$R/site-packages" -r "$REQ" --quiet
+if [ "$TARGET_ARCH" = "x86_64" ]; then
+  # Intel: tekerlekler derleme makinesine (yeni macOS) göre değil, hedef macOS sürümüne göre seçilmeli.
+  # Yoksa uv, numpy/scipy'nin yalnız macOS 14+ çalışan sürümlerini seçer ve eski Mac'te çekirdek hiç açılmaz.
+  # Hedefe uygun tekerleği olmayan paketlerin (av, ctranslate2, httptools…) en yeni uygun sürümü seçilir.
+  MIN_MACOS="${MACOSX_DEPLOYMENT_TARGET:-10.15}"
+  PLAT=(--python-platform x86_64-apple-darwin --python-version 3.12 --only-binary :all: --no-binary reverse-geocoder)
+  # Çözümleme macOS 11 etiketleriyle yapılır (onnxruntime için zorunlu); diğer paketler core/constraints-intel.txt
+  # ile macOS 10.15'te çalışan sürümlere sabitlenir. Sonuç aşağıda ikili ikili denetlenir.
+  MACOSX_DEPLOYMENT_TARGET="11.0" uv pip compile "$CORE/pyproject.toml" -c "$CORE/constraints-intel.txt" "${PLAT[@]}" --quiet -o "$REQ"
+  MACOSX_DEPLOYMENT_TARGET="11.0" uv pip install "${PLAT[@]}" --target "$R/site-packages" -r "$REQ" --quiet
+  echo "  Seçilen sürümler (macOS $MIN_MACOS uyumlu): $(grep -E '^(numpy|scipy|av|ctranslate2|httptools|protobuf)==' "$REQ" | tr '\n' ' ')"
+else
+  (cd "$CORE" && uv export --no-dev --no-hashes --format requirements-txt --no-emit-project > "$REQ")
+  uv pip install --python "$PY" --target "$R/site-packages" -r "$REQ" --quiet
+fi
 uv pip install --python "$PY" --target "$R/site-packages" --no-deps "$CORE" --quiet --reinstall-package mediamind
 rm -f "$REQ"
 find "$R/site-packages" -name '__pycache__' -type d -prune -exec rm -rf {} +
@@ -180,6 +193,9 @@ if [ -n "$EXIF_BIN" ]; then
   EXIF_LIBEXEC="$(sed -n 's/.*exec "\(.*\)\/bin\/exiftool".*/\1/p' "$EXIF_BIN")"
   [ -d "$EXIF_LIBEXEC" ] || EXIF_LIBEXEC="$EXIF/libexec"
   rsync -a --exclude man "$EXIF_LIBEXEC/" "$R/exiftool/"
+  # Homebrew'un derlediği isteğe bağlı Perl eklentileri bu Mac'in mimarisine ve macOS'una bağlı;
+  # exiftool onlarsız da çalışır, başka Mac'te yanlış mimari hatası vermesinler
+  if [ "$TARGET_ARCH" = "x86_64" ]; then rm -rf "$R/exiftool/lib/perl5/darwin-thread-multi-2level"; fi
   cat > "$R/bin/exiftool" <<'SH'
 #!/bin/sh
 D="$(cd "$(dirname "$0")/.." && pwd)"
@@ -201,6 +217,24 @@ export MEDIAMIND_LAUNCHER="$D/bin/mediamind"
 exec "$D/python/bin/python3" -s -m mediamind.cli "$@"
 SH
 chmod +x "$R/bin/mediamind"
+
+# 5b) Hedef macOS doğrulaması: daha yeni macOS isteyen ikili varsa eski Mac'te çekirdek açılmaz
+if [ "$TARGET_ARCH" = "x86_64" ]; then
+  echo "→ macOS ${MIN_MACOS} uyumluluğu denetleniyor..."
+  BAD="$(find "$R" -type f \( -name '*.so' -o -name '*.dylib' -o -name '*.bundle' -o -perm +111 \) ! -path '*.dSYM/*' -print0 \
+    | xargs -0 file 2>/dev/null | grep 'Mach-O' | cut -d: -f1 | while read -r f; do
+        m="$(otool -arch x86_64 -l "$f" 2>/dev/null | awk '/LC_BUILD_VERSION/{b=1} b&&/minos/{print $2; exit} /LC_VERSION_MIN_MACOSX/{v=1} v&&/version/{print $2; exit}')"
+        if [ -n "$m" ] && [ "$(printf '%s\n%s\n' "$MIN_MACOS" "$m" | sort -V | tail -1)" != "$MIN_MACOS" ]; then echo "$m ${f#$R/}"; fi
+      done || true)"
+  # onnxruntime'ın macOS 11'den eskiye sürümü yok: yalnız akıllı analizi etkiler (çekirdek onsuz açılır)
+  BLOCK="$(printf '%s\n' "$BAD" | grep -v 'site-packages/onnxruntime/' | grep -v '^$' || true)"
+  if [ -n "$BLOCK" ]; then
+    echo "Hata: şu ikililer macOS ${MIN_MACOS}'dan yeni bir sürüm istiyor:" >&2
+    printf '%s\n' "$BLOCK" | head -30 >&2
+    exit 1
+  fi
+  if [ -n "$BAD" ]; then echo "  Uyarı: onnxruntime macOS 11 istiyor; daha eski macOS'ta akıllı analiz çalışmayabilir."; fi
+fi
 
 # 6) Ad-hoc İmzalama ve Doğrulama
 echo "→ 6/6 İmzalama ve mimari doğrulaması yapılıyor..."
